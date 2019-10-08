@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include <openssl/aead.h>
+#include <openssl/aes.h>
 #include <openssl/bn.h>
 #include <openssl/curve25519.h>
 #include <openssl/digest.h>
@@ -50,6 +51,8 @@ OPENSSL_MSVC_PRAGMA(warning(pop))
 
 #include "../crypto/internal.h"
 #include "internal.h"
+
+#include "../third_party/sike/sike.h"
 
 
 // TimeResults represents the results of benchmarking a function.
@@ -294,6 +297,64 @@ static bool SpeedRSAKeyGen(const std::string &selected) {
   return true;
 }
 
+static bool SpeedSIKEP434(const std::string &selected) {
+  if (!selected.empty() && selected.find("SIKE") == std::string::npos) {
+    return true;
+  }
+  // speed generation
+  uint8_t public_SIKE[SIKE_PUB_BYTESZ];
+  uint8_t private_SIKE[SIKE_PRV_BYTESZ];
+  uint8_t ct[SIKE_CT_BYTESZ];
+  bool res;
+
+  {
+    TimeResults results;
+    res = TimeFunction(&results,
+                [&private_SIKE, &public_SIKE]() -> bool {
+      return (SIKE_keypair(private_SIKE, public_SIKE) == 1);
+    });
+    results.Print("SIKE/P434 generate");
+  }
+
+  if (!res) {
+    fprintf(stderr, "Failed to time SIKE_keypair.\n");
+    return false;
+  }
+
+  {
+    TimeResults results;
+    TimeFunction(&results,
+                [&ct, &public_SIKE]() -> bool {
+      uint8_t ss[SIKE_SS_BYTESZ];
+      SIKE_encaps(ss, ct, public_SIKE);
+      return true;
+    });
+    results.Print("SIKE/P434 encap");
+  }
+
+  if (!res) {
+    fprintf(stderr, "Failed to time SIKE_encaps.\n");
+    return false;
+  }
+
+  {
+    TimeResults results;
+    TimeFunction(&results,
+                [&ct, &public_SIKE, &private_SIKE]() -> bool {
+      uint8_t ss[SIKE_SS_BYTESZ];
+      SIKE_decaps(ss, ct, public_SIKE, private_SIKE);
+      return true;
+    });
+    results.Print("SIKE/P434 decap");
+  }
+
+  if (!res) {
+    fprintf(stderr, "Failed to time SIKE_decaps.\n");
+    return false;
+  }
+  return true;
+}
+
 static uint8_t *align(uint8_t *in, unsigned alignment) {
   return reinterpret_cast<uint8_t *>(
       (reinterpret_cast<uintptr_t>(in) + alignment) &
@@ -432,10 +493,79 @@ static bool SpeedAEADOpen(const EVP_AEAD *aead, const std::string &name,
   return true;
 }
 
+static bool SpeedAESBlock(const std::string &name, unsigned bits,
+                          const std::string &selected) {
+  if (!selected.empty() && name.find(selected) == std::string::npos) {
+    return true;
+  }
+
+  static const uint8_t kZero[32] = {0};
+
+  {
+    TimeResults results;
+    if (!TimeFunction(&results, [&]() -> bool {
+          AES_KEY key;
+          return AES_set_encrypt_key(kZero, bits, &key) == 0;
+        })) {
+      fprintf(stderr, "AES_set_encrypt_key failed.\n");
+      return false;
+    }
+    results.Print(name + " encrypt setup");
+  }
+
+  {
+    AES_KEY key;
+    if (AES_set_encrypt_key(kZero, bits, &key) != 0) {
+      return false;
+    }
+    uint8_t block[16] = {0};
+    TimeResults results;
+    if (!TimeFunction(&results, [&]() -> bool {
+          AES_encrypt(block, block, &key);
+          return true;
+        })) {
+      fprintf(stderr, "AES_encrypt failed.\n");
+      return false;
+    }
+    results.Print(name + " encrypt");
+  }
+
+  {
+    TimeResults results;
+    if (!TimeFunction(&results, [&]() -> bool {
+          AES_KEY key;
+          return AES_set_decrypt_key(kZero, bits, &key) == 0;
+        })) {
+      fprintf(stderr, "AES_set_decrypt_key failed.\n");
+      return false;
+    }
+    results.Print(name + " decrypt setup");
+  }
+
+  {
+    AES_KEY key;
+    if (AES_set_decrypt_key(kZero, bits, &key) != 0) {
+      return false;
+    }
+    uint8_t block[16] = {0};
+    TimeResults results;
+    if (!TimeFunction(&results, [&]() -> bool {
+          AES_decrypt(block, block, &key);
+          return true;
+        })) {
+      fprintf(stderr, "AES_decrypt failed.\n");
+      return false;
+    }
+    results.Print(name + " decrypt");
+  }
+
+  return true;
+}
+
 static bool SpeedHashChunk(const EVP_MD *md, std::string name,
                            size_t chunk_len) {
   bssl::ScopedEVP_MD_CTX ctx;
-  uint8_t scratch[8192];
+  uint8_t scratch[16384];
 
   if (chunk_len > sizeof(scratch)) {
     return false;
@@ -476,7 +606,7 @@ static bool SpeedHash(const EVP_MD *md, const std::string &name,
 }
 
 static bool SpeedRandomChunk(std::string name, size_t chunk_len) {
-  uint8_t scratch[8192];
+  uint8_t scratch[16384];
 
   if (chunk_len > sizeof(scratch)) {
     return false;
@@ -931,6 +1061,8 @@ bool Speed(const std::vector<std::string> &args) {
                      selected) ||
       !SpeedAEAD(EVP_aead_aes_128_ccm_bluetooth(), "AES-128-CCM-Bluetooth",
                  kTLSADLen, selected) ||
+      !SpeedAESBlock("AES-128", 128, selected) ||
+      !SpeedAESBlock("AES-256", 256, selected) ||
       !SpeedHash(EVP_sha1(), "SHA-1", selected) ||
       !SpeedHash(EVP_sha256(), "SHA-256", selected) ||
       !SpeedHash(EVP_sha512(), "SHA-512", selected) ||
@@ -938,6 +1070,7 @@ bool Speed(const std::vector<std::string> &args) {
       !SpeedECDH(selected) ||
       !SpeedECDSA(selected) ||
       !Speed25519(selected) ||
+      !SpeedSIKEP434(selected) ||
       !SpeedSPAKE2(selected) ||
       !SpeedScrypt(selected) ||
       !SpeedRSAKeyGen(selected) ||

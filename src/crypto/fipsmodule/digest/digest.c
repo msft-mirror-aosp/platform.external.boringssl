@@ -115,6 +115,13 @@ void EVP_MD_CTX_free(EVP_MD_CTX *ctx) {
 
 void EVP_MD_CTX_destroy(EVP_MD_CTX *ctx) { EVP_MD_CTX_free(ctx); }
 
+int EVP_DigestFinalXOF(EVP_MD_CTX *ctx, uint8_t *out, size_t len) {
+  OPENSSL_PUT_ERROR(DIGEST, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED);
+  return 0;
+}
+
+uint32_t EVP_MD_meth_get_flags(const EVP_MD *md) { return EVP_MD_flags(md); }
+
 int EVP_MD_CTX_copy_ex(EVP_MD_CTX *out, const EVP_MD_CTX *in) {
   // |in->digest| may be NULL if this is a signing |EVP_MD_CTX| for, e.g.,
   // Ed25519 which does not hash with |EVP_MD_CTX|.

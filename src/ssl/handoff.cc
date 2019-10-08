@@ -54,7 +54,7 @@ bool SSL_serialize_handoff(const SSL *ssl, CBB *out,
   const SSL3_STATE *const s3 = ssl->s3;
   if (!ssl->server ||
       s3->hs == nullptr ||
-      s3->rwstate != SSL_HANDOFF) {
+      s3->rwstate != SSL_ERROR_HANDOFF) {
     return false;
   }
 
@@ -81,7 +81,7 @@ bool SSL_decline_handoff(SSL *ssl) {
   const SSL3_STATE *const s3 = ssl->s3;
   if (!ssl->server ||
       s3->hs == nullptr ||
-      s3->rwstate != SSL_HANDOFF) {
+      s3->rwstate != SSL_ERROR_HANDOFF) {
     return false;
   }
 
@@ -449,6 +449,10 @@ bool SSL_apply_handback(SSL *ssl, Span<const uint8_t> handback) {
   s3->hs->ticket_expected = ticket_expected;
   s3->aead_write_ctx->SetVersionIfNullCipher(ssl->version);
   s3->hs->cert_request = cert_request;
+
+  // TODO(davidben): When handoff for TLS 1.3 is added, serialize
+  // |early_data_reason| and stabilize the constants.
+  s3->early_data_reason = ssl_early_data_protocol_version;
 
   Array<uint8_t> key_block;
   if ((type == handback_after_session_resumption ||
