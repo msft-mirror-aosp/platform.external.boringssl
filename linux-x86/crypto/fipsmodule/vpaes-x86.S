@@ -6,7 +6,7 @@
 #include <boringssl_prefix_symbols_asm.h>
 #endif
 .text
-#ifndef NDEBUG
+#ifdef BORINGSSL_DISPATCH_TEST
 #endif
 .align	64
 .L_vpaes_consts:
@@ -485,7 +485,7 @@ vpaes_set_encrypt_key:
 	pushl	%ebx
 	pushl	%esi
 	pushl	%edi
-#ifndef NDEBUG
+#ifdef BORINGSSL_DISPATCH_TEST
 	pushl	%ebx
 	pushl	%edx
 	call	.L016pic
@@ -570,7 +570,7 @@ vpaes_encrypt:
 	pushl	%ebx
 	pushl	%esi
 	pushl	%edi
-#ifndef NDEBUG
+#ifdef BORINGSSL_DISPATCH_TEST
 	pushl	%ebx
 	pushl	%edx
 	call	.L019pic
@@ -704,4 +704,5 @@ vpaes_cbc_encrypt:
 	popl	%ebp
 	ret
 .size	vpaes_cbc_encrypt,.-.L_vpaes_cbc_encrypt_begin
+.section	.note.GNU-stack,"",@progbits
 #endif

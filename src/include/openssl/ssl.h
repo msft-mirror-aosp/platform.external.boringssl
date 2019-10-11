@@ -560,6 +560,18 @@ OPENSSL_EXPORT int SSL_get_error(const SSL *ssl, int ret_code);
 #define SSL_ERROR_HANDOFF 17
 #define SSL_ERROR_HANDBACK 18
 
+// SSL_ERROR_WANT_RENEGOTIATE indicates the operation is pending a response to
+// a renegotiation request from the server. The caller may call
+// |SSL_renegotiate| to schedule a renegotiation and retry the operation.
+//
+// See also |ssl_renegotiate_explicit|.
+#define SSL_ERROR_WANT_RENEGOTIATE 19
+
+// SSL_error_description returns a string representation of |err|, where |err|
+// is one of the |SSL_ERROR_*| constants returned by |SSL_get_error|, or NULL
+// if the value is unrecognized.
+OPENSSL_EXPORT const char *SSL_error_description(int err);
+
 // SSL_set_mtu sets the |ssl|'s MTU in DTLS to |mtu|. It returns one on success
 // and zero on failure.
 OPENSSL_EXPORT int SSL_set_mtu(SSL *ssl, unsigned mtu);
@@ -1242,9 +1254,13 @@ DEFINE_CONST_STACK_OF(SSL_CIPHER)
 // https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4.
 OPENSSL_EXPORT const SSL_CIPHER *SSL_get_cipher_by_value(uint16_t value);
 
-// SSL_CIPHER_get_id returns |cipher|'s id. It may be cast to a |uint16_t| to
-// get the cipher suite value.
+// SSL_CIPHER_get_id returns |cipher|'s non-IANA id. This is not its
+// IANA-assigned number, which is called the "value" here, although it may be
+// cast to a |uint16_t| to get it.
 OPENSSL_EXPORT uint32_t SSL_CIPHER_get_id(const SSL_CIPHER *cipher);
+
+// SSL_CIPHER_get_value returns |cipher|'s IANA-assigned number.
+OPENSSL_EXPORT uint16_t SSL_CIPHER_get_value(const SSL_CIPHER *cipher);
 
 // SSL_CIPHER_is_aead returns one if |cipher| uses an AEAD cipher.
 OPENSSL_EXPORT int SSL_CIPHER_is_aead(const SSL_CIPHER *cipher);
@@ -3135,6 +3151,13 @@ OPENSSL_EXPORT int SSL_delegated_credential_used(const SSL *ssl);
 // |SSL_process_quic_post_handshake| to process it. It is an error to call
 // |SSL_read| and |SSL_write| in QUIC.
 //
+// 0-RTT behaves similarly to |TLS_method|'s usual behavior. |SSL_do_handshake|
+// returns early as soon as the client (respectively, server) is allowed to send
+// 0-RTT (respectively, half-RTT) data. The caller should then call
+// |SSL_do_handshake| again to consume the remaining handshake messages and
+// confirm the handshake. As a client, |SSL_ERROR_EARLY_DATA_REJECTED| and
+// |SSL_reset_early_data_reject| behave as usual.
+//
 // Note that secrets for an encryption level may be available to QUIC before the
 // level is active in TLS. Callers should use |SSL_quic_read_level| to determine
 // the active read level for |SSL_provide_quic_data|. |SSL_do_handshake| will
@@ -3150,7 +3173,8 @@ OPENSSL_EXPORT int SSL_delegated_credential_used(const SSL *ssl);
 // |SSL_quic_max_handshake_flight_len| to get the maximum buffer length at each
 // encryption level.
 //
-// Note: 0-RTT is not currently supported via this API.
+// Note: 0-RTT support is incomplete and does not currently handle QUIC
+// transport parameters and server SETTINGS frame.
 
 // ssl_encryption_level_t represents a specific QUIC encryption level used to
 // transmit handshake messages.
@@ -3332,34 +3356,39 @@ OPENSSL_EXPORT void SSL_reset_early_data_reject(SSL *ssl);
 // connections which resumed a session.
 OPENSSL_EXPORT int32_t SSL_get_ticket_age_skew(const SSL *ssl);
 
+// An ssl_early_data_reason_t describes why 0-RTT was accepted or rejected.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 enum ssl_early_data_reason_t BORINGSSL_ENUM_INT {
   // The handshake has not progressed far enough for the 0-RTT status to be
   // known.
-  ssl_early_data_unknown,
+  ssl_early_data_unknown = 0,
   // 0-RTT is disabled for this connection.
-  ssl_early_data_disabled,
+  ssl_early_data_disabled = 1,
   // 0-RTT was accepted.
-  ssl_early_data_accepted,
+  ssl_early_data_accepted = 2,
   // The negotiated protocol version does not support 0-RTT.
-  ssl_early_data_protocol_version,
+  ssl_early_data_protocol_version = 3,
   // The peer declined to offer or accept 0-RTT for an unknown reason.
-  ssl_early_data_peer_declined,
+  ssl_early_data_peer_declined = 4,
   // The client did not offer a session.
-  ssl_early_data_no_session_offered,
+  ssl_early_data_no_session_offered = 5,
   // The server declined to resume the session.
-  ssl_early_data_session_not_resumed,
+  ssl_early_data_session_not_resumed = 6,
   // The session does not support 0-RTT.
-  ssl_early_data_unsupported_for_session,
+  ssl_early_data_unsupported_for_session = 7,
   // The server sent a HelloRetryRequest.
-  ssl_early_data_hello_retry_request,
+  ssl_early_data_hello_retry_request = 8,
   // The negotiated ALPN protocol did not match the session.
-  ssl_early_data_alpn_mismatch,
+  ssl_early_data_alpn_mismatch = 9,
   // The connection negotiated Channel ID, which is incompatible with 0-RTT.
-  ssl_early_data_channel_id,
+  ssl_early_data_channel_id = 10,
   // The connection negotiated token binding, which is incompatible with 0-RTT.
-  ssl_early_data_token_binding,
+  ssl_early_data_token_binding = 11,
   // The client and server ticket age were too far apart.
-  ssl_early_data_ticket_age_skew,
+  ssl_early_data_ticket_age_skew = 12,
+  // The value of the largest entry.
+  ssl_early_data_reason_max_value = ssl_early_data_ticket_age_skew,
 };
 
 // SSL_get_early_data_reason returns details why 0-RTT was accepted or rejected
@@ -3583,6 +3612,7 @@ enum ssl_renegotiate_mode_t BORINGSSL_ENUM_INT {
   ssl_renegotiate_once,
   ssl_renegotiate_freely,
   ssl_renegotiate_ignore,
+  ssl_renegotiate_explicit,
 };
 
 // SSL_set_renegotiate_mode configures how |ssl|, a client, reacts to
@@ -3596,6 +3626,13 @@ enum ssl_renegotiate_mode_t BORINGSSL_ENUM_INT {
 // Note that ignoring HelloRequest messages may cause the connection to stall
 // if the server waits for the renegotiation to complete.
 //
+// If set to |ssl_renegotiate_explicit|, |SSL_read| and |SSL_peek| calls which
+// encounter a HelloRequest will pause with |SSL_ERROR_WANT_RENEGOTIATE|.
+// |SSL_write| will continue to work while paused. The caller may call
+// |SSL_renegotiate| to begin the renegotiation at a later point. This mode may
+// be used if callers wish to eagerly call |SSL_peek| without triggering a
+// renegotiation.
+//
 // If configuration shedding is enabled (see |SSL_set_shed_handshake_config|),
 // configuration is released if, at any point after the handshake, renegotiation
 // is disabled. It is not possible to switch from disabling renegotiation to
@@ -3607,6 +3644,16 @@ enum ssl_renegotiate_mode_t BORINGSSL_ENUM_INT {
 // or server.
 OPENSSL_EXPORT void SSL_set_renegotiate_mode(SSL *ssl,
                                              enum ssl_renegotiate_mode_t mode);
+
+// SSL_renegotiate starts a deferred renegotiation on |ssl| if it was configured
+// with |ssl_renegotiate_explicit| and has a pending HelloRequest. It returns
+// one on success and zero on error.
+//
+// This function does not do perform any I/O. On success, a subsequent
+// |SSL_do_handshake| call will run the handshake. |SSL_write| and
+// |SSL_read| will also complete the handshake before sending or receiving
+// application data.
+OPENSSL_EXPORT int SSL_renegotiate(SSL *ssl);
 
 // SSL_renegotiate_pending returns one if |ssl| is in the middle of a
 // renegotiation.
@@ -4059,9 +4106,6 @@ OPENSSL_EXPORT int SSL_get_read_ahead(const SSL *ssl);
 // SSL_set_read_ahead returns one.
 OPENSSL_EXPORT int SSL_set_read_ahead(SSL *ssl, int yes);
 
-// SSL_renegotiate put an error on the error queue and returns zero.
-OPENSSL_EXPORT int SSL_renegotiate(SSL *ssl);
-
 // SSL_set_state does nothing.
 OPENSSL_EXPORT void SSL_set_state(SSL *ssl, int state);
 
@@ -4291,19 +4335,9 @@ OPENSSL_EXPORT const char *SSL_get_cipher_list(const SSL *ssl, int n);
 OPENSSL_EXPORT void SSL_CTX_set_client_cert_cb(
     SSL_CTX *ctx, int (*cb)(SSL *ssl, X509 **out_x509, EVP_PKEY **out_pkey));
 
-#define SSL_NOTHING 1
-#define SSL_WRITING 2
-#define SSL_READING 3
-#define SSL_X509_LOOKUP 4
-#define SSL_CHANNEL_ID_LOOKUP 5
-#define SSL_PENDING_SESSION 7
-#define SSL_CERTIFICATE_SELECTION_PENDING 8
-#define SSL_PRIVATE_KEY_OPERATION 9
-#define SSL_PENDING_TICKET 10
-#define SSL_EARLY_DATA_REJECTED 11
-#define SSL_CERTIFICATE_VERIFY 12
-#define SSL_HANDOFF 13
-#define SSL_HANDBACK 14
+#define SSL_NOTHING SSL_ERROR_NONE
+#define SSL_WRITING SSL_ERROR_WANT_WRITE
+#define SSL_READING SSL_ERROR_WANT_READ
 
 // SSL_want returns one of the above values to determine what the most recent
 // operation on |ssl| was blocked on. Use |SSL_get_error| instead.
@@ -5035,6 +5069,7 @@ BSSL_NAMESPACE_END
 #define SSL_R_TOO_MUCH_READ_EARLY_DATA 300
 #define SSL_R_INVALID_DELEGATED_CREDENTIAL 301
 #define SSL_R_KEY_USAGE_BIT_INCORRECT 302
+#define SSL_R_INCONSISTENT_CLIENT_HELLO 303
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010
 #define SSL_R_SSLV3_ALERT_BAD_RECORD_MAC 1020

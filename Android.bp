@@ -78,6 +78,61 @@ cc_defaults {
     },
 }
 
+cc_object {
+    name: "bcm_object",
+    device_supported: true,
+    recovery_available: true,
+    native_bridge_supported: true,
+    defaults: [
+        "libcrypto_bcm_sources",
+        "libcrypto_defaults",
+        "boringssl_defaults",
+        "boringssl_flags",
+    ],
+    sanitize: {
+        address: false,
+    },
+    target: {
+        android: {
+            cflags: [
+                "-DBORINGSSL_FIPS",
+                "-fPIC",
+            ],
+            linker_script: "src/crypto/fipsmodule/fips_shared.lds",
+        },
+    },
+}
+
+bootstrap_go_package {
+    name: "bssl_ar",
+    pkgPath: "boringssl.googlesource.com/boringssl/util/ar",
+    srcs: [
+        "src/util/ar/ar.go",
+    ],
+    testSrcs: [
+        "src/util/ar/ar_test.go",
+    ],
+}
+
+bootstrap_go_package {
+    name: "bssl_fipscommon",
+    pkgPath: "boringssl.googlesource.com/boringssl/util/fipstools/fipscommon",
+    srcs: [
+        "src/util/fipstools/fipscommon/const.go",
+    ],
+}
+
+blueprint_go_binary {
+    name: "bssl_inject_hash",
+    srcs: [
+        "src/util/fipstools/inject_hash/inject_hash.go",
+    ],
+    deps: [
+        "bssl_ar",
+        "bssl_fipscommon",
+    ],
+}
+
 // Target and host library
 cc_library {
     name: "libcrypto",
@@ -90,21 +145,57 @@ cc_library {
     double_loadable: true,
     recovery_available: true,
     defaults: [
-        "libcrypto_bcm_sources",
         "libcrypto_sources",
         "libcrypto_defaults",
         "boringssl_defaults",
         "boringssl_flags",
     ],
     unique_host_soname: true,
+    srcs: [
+        ":bcm_object",
+    ],
+    target: {
+        android: {
+            cflags: [
+                "-DBORINGSSL_FIPS",
+            ],
+            inject_bssl_hash: true,
+            static: {
+                // Disable the static version of libcrypto, as it causes
+                // problems for FIPS certification.  Use libcrypto_static for
+                // modules that need static libcrypto but do not need FIPS self
+                // testing, or use dynamic libcrypto.
+                enabled: false,
+            },
+        },
+    },
 }
 
 // Static library
-// This should only be used for host modules that will be in a JVM, all other
-// modules should use the static variant of libcrypto.
+// This version of libcrypto will not have FIPS self tests enabled, so its
+// usage is protected through visibility to ensure it doesn't end up used
+// somewhere that needs the FIPS version.
 cc_library_static {
     name: "libcrypto_static",
-    visibility: ["//visibility:public"],
+    visibility: [
+        "//bootable/recovery/updater",
+        "//external/conscrypt",
+        "//external/python/cpython2",
+        "//frameworks/ml/nn/runtime/test",
+        "//hardware/interfaces/confirmationui/1.0/vts/functional",
+        "//hardware/interfaces/drm/1.0/vts/functional",
+        "//hardware/interfaces/drm/1.2/vts/functional",
+        "//hardware/interfaces/keymaster/3.0/vts/functional",
+        "//hardware/interfaces/keymaster/4.0/vts/functional",
+        "//system/core/adb",
+        "//system/core/init",
+        "//system/core/fs_mgr/liblp",
+        "//system/core/fs_mgr/liblp/vts_core",
+        "//system/core/fs_mgr/libsnapshot",
+        "//system/libvintf/test",
+        "//system/security/keystore/tests",
+        "//test/vts-testcase/security/avb",
+    ],
     defaults: [
         "libcrypto_bcm_sources",
         "libcrypto_sources",
@@ -112,34 +203,11 @@ cc_library_static {
         "boringssl_defaults",
         "boringssl_flags",
     ],
-
-    target: {
-        host: {
-            // TODO: b/26160319. ASAN breaks use of this library in JVM.
-            // Re-enable sanitization when the issue with making clients of this library
-            // preload ASAN runtime is resolved. Without that, clients are getting runtime
-            // errors due to unresolved ASAN symbols, such as
-            // __asan_option_detect_stack_use_after_return.
-            sanitize: {
-                never: true,
-            },
-        },
-    },
 }
 
 //// libssl
 
 // Target static library
-// Deprecated: all users should move to libssl
-cc_library_static {
-    name: "libssl_static",
-    visibility: ["//visibility:public"],
-    defaults: [
-        "libssl_sources",
-        "boringssl_defaults",
-        "boringssl_flags",
-    ],
-}
 
 // Static and Shared library
 cc_library {

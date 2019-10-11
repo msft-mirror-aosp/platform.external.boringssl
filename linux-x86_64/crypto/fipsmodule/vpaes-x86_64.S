@@ -812,12 +812,10 @@ _vpaes_schedule_mangle:
 .align	16
 vpaes_set_encrypt_key:
 .cfi_startproc	
-#ifndef NDEBUG
-#ifndef BORINGSSL_FIPS
+#ifdef BORINGSSL_DISPATCH_TEST
 .extern	BORINGSSL_function_hit
 .hidden BORINGSSL_function_hit
 	movb	$1,BORINGSSL_function_hit+5(%rip)
-#endif
 #endif
 
 	movl	%esi,%eax
@@ -863,12 +861,10 @@ vpaes_set_decrypt_key:
 .align	16
 vpaes_encrypt:
 .cfi_startproc	
-#ifndef NDEBUG
-#ifndef BORINGSSL_FIPS
+#ifdef BORINGSSL_DISPATCH_TEST
 .extern	BORINGSSL_function_hit
 .hidden BORINGSSL_function_hit
 	movb	$1,BORINGSSL_function_hit+4(%rip)
-#endif
 #endif
 	movdqu	(%rdi),%xmm0
 	call	_vpaes_preheat
@@ -1133,4 +1129,5 @@ _vpaes_consts:
 .byte	86,101,99,116,111,114,32,80,101,114,109,117,116,97,116,105,111,110,32,65,69,83,32,102,111,114,32,120,56,54,95,54,52,47,83,83,83,69,51,44,32,77,105,107,101,32,72,97,109,98,117,114,103,32,40,83,116,97,110,102,111,114,100,32,85,110,105,118,101,114,115,105,116,121,41,0
 .align	64
 .size	_vpaes_consts,.-_vpaes_consts
+.section	.note.GNU-stack,"",@progbits
 #endif
