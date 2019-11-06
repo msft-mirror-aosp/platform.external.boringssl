@@ -91,12 +91,17 @@ cc_object {
     ],
     sanitize: {
         address: false,
+        hwaddress: false,
     },
     target: {
         android: {
             cflags: [
                 "-DBORINGSSL_FIPS",
                 "-fPIC",
+                // -fno[data|text]-sections required to ensure a
+                // single text and data section for FIPS integrity check
+                "-fno-data-sections",
+                "-fno-function-sections",
             ],
             linker_script: "src/crypto/fipsmodule/fips_shared.lds",
         },
@@ -181,7 +186,7 @@ cc_library_static {
         "//bootable/recovery/updater",
         "//external/conscrypt",
         "//external/python/cpython2",
-        "//frameworks/ml/nn/runtime/test",
+        "//frameworks/ml/nn/runtime:__subpackages__",
         "//hardware/interfaces/confirmationui/1.0/vts/functional",
         "//hardware/interfaces/drm/1.0/vts/functional",
         "//hardware/interfaces/drm/1.2/vts/functional",
@@ -327,5 +332,20 @@ cc_test {
     shared_libs: [
         "libcrypto",
         "libssl",
+    ],
+}
+
+// Utility binary for CMVP on-site testing.
+cc_binary {
+    name: "test_fips",
+    host_supported: false,
+    defaults: [
+        "boringssl_flags",
+    ],
+    shared_libs: [
+        "libcrypto",
+    ],
+    srcs: [
+        "src/util/fipstools/cavp/test_fips.c",
     ],
 }
