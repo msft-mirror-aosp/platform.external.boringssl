@@ -70,12 +70,6 @@ cc_defaults {
     },
 
     local_include_dirs: ["src/crypto"],
-
-    arch: {
-        arm64: {
-            clang_asflags: ["-march=armv8-a+crypto"],
-        },
-    },
 }
 
 cc_object {
@@ -92,6 +86,7 @@ cc_object {
     sanitize: {
         address: false,
         hwaddress: false,
+        fuzzer: false,
     },
     target: {
         android: {
@@ -104,6 +99,18 @@ cc_object {
                 "-fno-function-sections",
             ],
             linker_script: "src/crypto/fipsmodule/fips_shared.lds",
+        },
+        // Temporary hack to let BoringSSL build with a new compiler.
+        // This doesn't enable HWASAN unconditionally, it just causes
+        // BoringSSL's asm code to unconditionally use a HWASAN-compatible
+        // global variable reference so that the non-HWASANified (because of
+        // sanitize: { hwaddress: false } above) code in the BCM can
+        // successfully link against the HWASANified code in the rest of
+        // BoringSSL in HWASAN builds.
+        android_arm64: {
+            asflags: [
+                "-fsanitize=hwaddress",
+            ],
         },
     },
 }
@@ -192,6 +199,7 @@ cc_library_static {
         "//hardware/interfaces/drm/1.2/vts/functional",
         "//hardware/interfaces/keymaster/3.0/vts/functional",
         "//hardware/interfaces/keymaster/4.0/vts/functional",
+        "//packages/modules/DnsResolver/tests:__subpackages__",
         "//system/core/adb",
         "//system/core/init",
         "//system/core/fs_mgr/liblp",
@@ -230,6 +238,11 @@ cc_library {
         "boringssl_defaults",
         "boringssl_flags",
     ],
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
     unique_host_soname: true,
 
     shared_libs: ["libcrypto"],
