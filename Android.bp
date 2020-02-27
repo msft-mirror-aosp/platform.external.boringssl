@@ -181,6 +181,11 @@ cc_library {
             },
         },
     },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.adbd",
+        "test_com.android.adbd",
+    ],
 }
 
 // Static library
@@ -210,6 +215,11 @@ cc_library_static {
         "//system/libvintf/test",
         "//system/security/keystore/tests",
         "//test/vts-testcase/security/avb",
+    ],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.neuralnetworks",
+        "test_com.android.neuralnetworks",
     ],
     defaults: [
         "libcrypto_bcm_sources",
@@ -248,6 +258,12 @@ cc_library {
     unique_host_soname: true,
 
     shared_libs: ["libcrypto"],
+
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.adbd",
+        "test_com.android.adbd",
+    ],
 }
 
 // Tool
