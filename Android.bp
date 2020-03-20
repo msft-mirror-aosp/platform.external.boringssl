@@ -113,6 +113,17 @@ cc_object {
             ],
         },
     },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.adbd",
+        "com.android.art.debug",
+        "com.android.art.release",
+        "com.android.art.testing",
+        "com.android.bluetooth.updatable",
+        "com.android.conscrypt",
+        "com.android.media",
+        "com.android.resolv",
+    ],
 }
 
 bootstrap_go_package {
@@ -181,6 +192,17 @@ cc_library {
             },
         },
     },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.adbd",
+        "com.android.art.debug",
+        "com.android.art.release",
+        "com.android.art.testing",
+        "com.android.bluetooth.updatable",
+        "com.android.conscrypt",
+        "com.android.media",
+        "com.android.resolv",
+    ],
 }
 
 // Static library
@@ -193,12 +215,13 @@ cc_library_static {
         "//bootable/recovery/updater",
         "//external/conscrypt",
         "//external/python/cpython2",
-        "//frameworks/ml/nn/runtime:__subpackages__",
+        "//frameworks/ml/nn:__subpackages__",
         "//hardware/interfaces/confirmationui/1.0/vts/functional",
         "//hardware/interfaces/drm/1.0/vts/functional",
         "//hardware/interfaces/drm/1.2/vts/functional",
         "//hardware/interfaces/keymaster/3.0/vts/functional",
         "//hardware/interfaces/keymaster/4.0/vts/functional",
+        "//hardware/interfaces/keymaster/4.1/vts/functional",
         "//packages/modules/DnsResolver/tests:__subpackages__",
         "//system/core/adb",
         "//system/core/init",
@@ -208,6 +231,10 @@ cc_library_static {
         "//system/libvintf/test",
         "//system/security/keystore/tests",
         "//test/vts-testcase/security/avb",
+    ],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.neuralnetworks",
     ],
     defaults: [
         "libcrypto_bcm_sources",
@@ -246,6 +273,13 @@ cc_library {
     unique_host_soname: true,
 
     shared_libs: ["libcrypto"],
+
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.adbd",
+        "com.android.conscrypt",
+        "com.android.resolv",
+    ],
 }
 
 // Tool
