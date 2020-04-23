@@ -124,7 +124,6 @@ cc_object {
         "com.android.media",
         "com.android.resolv",
     ],
-    min_sdk_version: "29",
 }
 
 bootstrap_go_package {
@@ -204,7 +203,6 @@ cc_library {
         "com.android.media",
         "com.android.resolv",
     ],
-    min_sdk_version: "29",
 }
 
 // Static library
@@ -283,7 +281,6 @@ cc_library {
         "com.android.conscrypt",
         "com.android.resolv",
     ],
-    min_sdk_version: "29",
 }
 
 // Tool
