@@ -210,18 +210,15 @@ int GENERAL_NAME_print(BIO *out, GENERAL_NAME *gen)
         break;
 
     case GEN_EMAIL:
-        BIO_printf(out, "email:");
-        ASN1_STRING_print(out, gen->d.ia5);
+        BIO_printf(out, "email:%s", gen->d.ia5->data);
         break;
 
     case GEN_DNS:
-        BIO_printf(out, "DNS:");
-        ASN1_STRING_print(out, gen->d.ia5);
+        BIO_printf(out, "DNS:%s", gen->d.ia5->data);
         break;
 
     case GEN_URI:
-        BIO_printf(out, "URI:");
-        ASN1_STRING_print(out, gen->d.ia5);
+        BIO_printf(out, "URI:%s", gen->d.ia5->data);
         break;
 
     case GEN_DIRNAME:

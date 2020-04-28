@@ -664,9 +664,11 @@ _aesni_ctr32_6x:
 .align	32
 aesni_gcm_encrypt:
 .cfi_startproc
-#ifdef BORINGSSL_DISPATCH_TEST
+#ifndef NDEBUG
+#ifndef BORINGSSL_FIPS
 .extern	BORINGSSL_function_hit
 	movb \$1,BORINGSSL_function_hit+2(%rip)
+#endif
 #endif
 	xor	$ret,$ret
 
@@ -1141,4 +1143,4 @@ $code =~ s/\`([^\`]*)\`/eval($1)/gem;
 
 print $code;
 
-close STDOUT or die "error closing STDOUT";
+close STDOUT;

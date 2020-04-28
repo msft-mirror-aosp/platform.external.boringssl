@@ -1,11 +1,10 @@
 // This file is generated from a similarly-named Perl script in the BoringSSL
 // source tree. Do not edit by hand.
 
-#if !defined(__has_feature)
-#define __has_feature(x) 0
-#endif
+#if defined(__has_feature)
 #if __has_feature(memory_sanitizer) && !defined(OPENSSL_NO_ASM)
 #define OPENSSL_NO_ASM
+#endif
 #endif
 
 #if !defined(OPENSSL_NO_ASM)
@@ -65,12 +64,9 @@
 .align	6
 sha256_block_data_order:
 #ifndef	__KERNEL__
-#if __has_feature(hwaddress_sanitizer) && __clang_major__ >= 10
-	adrp	x16,:pg_hi21_nc:OPENSSL_armcap_P
-#else
 	adrp	x16,OPENSSL_armcap_P
-#endif
-	ldr	w16,[x16,:lo12:OPENSSL_armcap_P]
+	add	x16,x16,:lo12:OPENSSL_armcap_P
+	ldr	w16,[x16]
 	tst	w16,#ARMV8_SHA256
 	b.ne	.Lv8_entry
 #endif
@@ -1210,4 +1206,3 @@ sha256_block_armv8:
 #endif
 #endif
 #endif  // !OPENSSL_NO_ASM
-.section	.note.GNU-stack,"",%progbits

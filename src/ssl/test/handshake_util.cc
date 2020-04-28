@@ -38,22 +38,13 @@
 using namespace bssl;
 
 bool RetryAsync(SSL *ssl, int ret) {
-  const TestConfig *config = GetTestConfig(ssl);
-  TestState *test_state = GetTestState(ssl);
+  // No error; don't retry.
   if (ret >= 0) {
     return false;
   }
 
-  int ssl_err = SSL_get_error(ssl, ret);
-  if (ssl_err == SSL_ERROR_WANT_RENEGOTIATE && config->renegotiate_explicit) {
-    test_state->explicit_renegotiates++;
-    return SSL_renegotiate(ssl);
-  }
-
-  if (!config->async) {
-    // Only asynchronous tests should trigger other retries.
-    return false;
-  }
+  TestState *test_state = GetTestState(ssl);
+  assert(GetTestConfig(ssl)->async);
 
   if (test_state->packeted_bio != nullptr &&
       PacketedBioAdvanceClock(test_state->packeted_bio)) {
@@ -72,7 +63,7 @@ bool RetryAsync(SSL *ssl, int ret) {
 
   // See if we needed to read or write more. If so, allow one byte through on
   // the appropriate end to maximally stress the state machine.
-  switch (ssl_err) {
+  switch (SSL_get_error(ssl, ret)) {
     case SSL_ERROR_WANT_READ:
       AsyncBioAllowRead(test_state->async_bio, 1);
       return true;
@@ -80,7 +71,8 @@ bool RetryAsync(SSL *ssl, int ret) {
       AsyncBioAllowWrite(test_state->async_bio, 1);
       return true;
     case SSL_ERROR_WANT_CHANNEL_ID_LOOKUP: {
-      UniquePtr<EVP_PKEY> pkey = LoadPrivateKey(config->send_channel_id);
+      UniquePtr<EVP_PKEY> pkey =
+          LoadPrivateKey(GetTestConfig(ssl)->send_channel_id);
       if (!pkey) {
         return false;
       }
@@ -421,9 +413,8 @@ static bool PrepareHandoff(SSL *ssl, SettingsWriter *writer,
   }
 
   ScopedCBB cbb;
-  SSL_CLIENT_HELLO hello;
   if (!CBB_init(cbb.get(), 512) ||
-      !SSL_serialize_handoff(ssl, cbb.get(), &hello) ||
+      !SSL_serialize_handoff(ssl, cbb.get()) ||
       !writer->WriteHandoff({CBB_data(cbb.get()), CBB_len(cbb.get())}) ||
       !SerializeContextState(ssl->ctx.get(), cbb.get()) ||
       !GetTestState(ssl)->Serialize(cbb.get())) {

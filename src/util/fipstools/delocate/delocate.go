@@ -803,8 +803,6 @@ const (
 	instrCombine
 	// instrThreeArg merges two sources into a destination in some fashion.
 	instrThreeArg
-	// instrCompare takes two arguments and writes outputs to the flags register.
-	instrCompare
 	instrOther
 )
 
@@ -835,11 +833,6 @@ func classifyInstruction(instr string, args []*node32) instructionType {
 			return instrCombine
 		}
 
-	case "cmpq":
-		if len(args) == 2 {
-			return instrCompare
-		}
-
 	case "sarxq", "shlxq", "shrxq":
 		if len(args) == 3 {
 			return instrThreeArg
@@ -859,13 +852,6 @@ func push(w stringWriter) wrapperFunc {
 		w.WriteString("\tpushq %rax\n")
 		k()
 		w.WriteString("\txchg %rax, (%rsp)\n")
-	}
-}
-
-func compare(w stringWriter, instr, a, b string) wrapperFunc {
-	return func(k func()) {
-		k()
-		w.WriteString(fmt.Sprintf("\t%s %s, %s\n", instr, a, b))
 	}
 }
 
@@ -1088,7 +1074,7 @@ Args:
 				}
 
 				classification := classifyInstruction(instructionName, argNodes)
-				if classification != instrThreeArg && classification != instrCompare && i != 0 {
+				if classification != instrThreeArg && i != 0 {
 					return nil, errors.New("GOT access must be source operand")
 				}
 
@@ -1105,17 +1091,6 @@ Args:
 				case instrMove:
 					assertNodeType(argNodes[1], ruleRegisterOrConstant)
 					targetReg = d.contents(argNodes[1])
-				case instrCompare:
-					otherSource := d.contents(argNodes[i^1])
-					saveRegWrapper, tempReg := saveRegister(d.output, []string{otherSource})
-					redzoneCleared = true
-					wrappers = append(wrappers, saveRegWrapper)
-					if i == 0 {
-						wrappers = append(wrappers, compare(d.output, instructionName, tempReg, otherSource))
-					} else {
-						wrappers = append(wrappers, compare(d.output, instructionName, otherSource, tempReg))
-					}
-					targetReg = tempReg
 				case instrTransformingMove:
 					assertNodeType(argNodes[1], ruleRegisterOrConstant)
 					targetReg = d.contents(argNodes[1])
@@ -1139,7 +1114,7 @@ Args:
 						return nil, fmt.Errorf("three-argument instruction has %d arguments", n)
 					}
 					if i != 0 && i != 1 {
-						return nil, errors.New("GOT access must be from source operand")
+						return nil, errors.New("GOT access must be from soure operand")
 					}
 					targetReg = d.contents(argNodes[2])
 
@@ -1294,10 +1269,6 @@ func transform(w stringWriter, inputs []inputFile) error {
 	// maxObservedFileNumber contains the largest seen file number in a
 	// .file directive. Zero is not a valid number.
 	maxObservedFileNumber := 0
-	// fileDirectivesContainMD5 is true if the compiler is outputting MD5
-	// checksums in .file directives. If it does so, then this script needs
-	// to match that behaviour otherwise warnings result.
-	fileDirectivesContainMD5 := false
 
 	// OPENSSL_ia32cap_get will be synthesized by this script.
 	symbols["OPENSSL_ia32cap_get"] = struct{}{}
@@ -1357,12 +1328,6 @@ func transform(w stringWriter, inputs []inputFile) error {
 			if fileNo > maxObservedFileNumber {
 				maxObservedFileNumber = fileNo
 			}
-
-			for _, token := range parts[2:] {
-				if token == "md5" {
-					fileDirectivesContainMD5 = true
-				}
-			}
 		}, ruleStatement, ruleLocationDirective)
 	}
 
@@ -1383,11 +1348,7 @@ func transform(w stringWriter, inputs []inputFile) error {
 	}
 
 	w.WriteString(".text\n")
-	var fileTrailing string
-	if fileDirectivesContainMD5 {
-		fileTrailing = " md5 0x00000000000000000000000000000000"
-	}
-	w.WriteString(fmt.Sprintf(".file %d \"inserted_by_delocate.c\"%s\n", maxObservedFileNumber+1, fileTrailing))
+	w.WriteString(fmt.Sprintf(".file %d \"inserted_by_delocate.c\"\n", maxObservedFileNumber+1))
 	w.WriteString(fmt.Sprintf(".loc %d 1 0\n", maxObservedFileNumber+1))
 	w.WriteString("BORINGSSL_bcm_text_start:\n")
 

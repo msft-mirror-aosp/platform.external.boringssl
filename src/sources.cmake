@@ -14,7 +14,6 @@ set(
   crypto/cipher_extra/test/aes_128_ctr_hmac_sha256.txt
   crypto/cipher_extra/test/aes_128_gcm_siv_tests.txt
   crypto/cipher_extra/test/aes_128_gcm_tests.txt
-  crypto/cipher_extra/test/aes_192_gcm_tests.txt
   crypto/cipher_extra/test/aes_256_cbc_sha1_tls_implicit_iv_tests.txt
   crypto/cipher_extra/test/aes_256_cbc_sha1_tls_tests.txt
   crypto/cipher_extra/test/aes_256_cbc_sha256_tls_tests.txt
@@ -47,7 +46,6 @@ set(
   crypto/evp/scrypt_tests.txt
   crypto/fipsmodule/aes/aes_tests.txt
   crypto/fipsmodule/bn/bn_tests.txt
-  crypto/fipsmodule/bn/miller_rabin_tests.txt
   crypto/fipsmodule/ec/ec_scalar_base_mult_tests.txt
   crypto/fipsmodule/ec/p256-x86_64_tests.txt
   crypto/fipsmodule/ecdsa/ecdsa_sign_tests.txt
@@ -56,7 +54,6 @@ set(
   crypto/fipsmodule/rand/ctrdrbg_vectors.txt
   crypto/hmac_extra/hmac_tests.txt
   crypto/poly1305/poly1305_tests.txt
-  crypto/siphash/siphash_tests.txt
   crypto/x509/many_constraints.pem
   crypto/x509/many_names1.pem
   crypto/x509/many_names2.pem
@@ -83,7 +80,6 @@ set(
   third_party/wycheproof_testvectors/ecdsa_secp384r1_sha512_test.txt
   third_party/wycheproof_testvectors/ecdsa_secp521r1_sha512_test.txt
   third_party/wycheproof_testvectors/eddsa_test.txt
-  third_party/wycheproof_testvectors/kwp_test.txt
   third_party/wycheproof_testvectors/kw_test.txt
   third_party/wycheproof_testvectors/rsa_pss_2048_sha1_mgf1_20_test.txt
   third_party/wycheproof_testvectors/rsa_pss_2048_sha256_mgf1_0_test.txt

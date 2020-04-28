@@ -44,11 +44,9 @@ if ($flavour && $flavour ne "void") {
     ( $xlate="${dir}../../perlasm/arm-xlate.pl" and -f $xlate) or
     die "can't locate arm-xlate.pl";
 
-    open OUT,"| \"$^X\" $xlate $flavour $output";
-    *STDOUT=*OUT;
+    open STDOUT,"| \"$^X\" $xlate $flavour $output";
 } else {
-    open OUT,">$output";
-    *STDOUT=*OUT;
+    open STDOUT,">$output";
 }
 
 sub AUTOLOAD()		# thunk [simplified] x86-style perlasm
@@ -1163,4 +1161,4 @@ foreach (split("\n",$code)) {
 
 	print $_,"\n";
 }
-close STDOUT or die "error closing STDOUT";
+close STDOUT;

@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/subtle"
@@ -19,6 +18,8 @@ import (
 	"math/big"
 	"net"
 	"time"
+
+	"boringssl.googlesource.com/boringssl/ssl/test/runner/ed25519"
 )
 
 type clientHandshakeState struct {
@@ -124,11 +125,10 @@ func (c *Conn) clientHandshake() error {
 		srtpProtectionProfiles:  c.config.SRTPProtectionProfiles,
 		srtpMasterKeyIdentifier: c.config.Bugs.SRTPMasterKeyIdentifer,
 		customExtension:         c.config.Bugs.CustomExtension,
-		pskBinderFirst:          c.config.Bugs.PSKBinderFirst && !c.config.Bugs.OnlyCorruptSecondPSKBinder,
+		pskBinderFirst:          c.config.Bugs.PSKBinderFirst,
 		omitExtensions:          c.config.Bugs.OmitExtensions,
 		emptyExtensions:         c.config.Bugs.EmptyExtensions,
 		delegatedCredentials:    !c.config.Bugs.DisableDelegatedCredentials,
-		pqExperimentSignal:      c.config.PQExperimentSignal,
 	}
 
 	if maxVersion >= VersionTLS13 {
@@ -602,12 +602,6 @@ NextCipherSuite:
 		}
 
 		hello.hasEarlyData = c.config.Bugs.SendEarlyDataOnSecondClientHello
-		// The first ClientHello may have skipped this due to OnlyCorruptSecondPSKBinder.
-		hello.pskBinderFirst = c.config.Bugs.PSKBinderFirst
-		if c.config.Bugs.OmitPSKsOnSecondClientHello {
-			hello.pskIdentities = nil
-			hello.pskBinders = nil
-		}
 		hello.raw = nil
 
 		if len(hello.pskIdentities) > 0 {
@@ -1459,7 +1453,7 @@ func (hs *clientHandshakeState) verifyCertificates(certMsg *certificateMsg) erro
 		}
 	}
 
-	leafPublicKey := certs[0].PublicKey
+	leafPublicKey := getCertificatePublicKey(certs[0])
 	switch leafPublicKey.(type) {
 	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
 		break
@@ -1670,10 +1664,6 @@ func (hs *clientHandshakeState) processServerExtensions(serverExtensions *server
 			return errors.New("tls: server sent QUIC transport params for TLS version less than 1.3")
 		}
 		c.quicTransportParams = serverExtensions.quicTransportParams
-	}
-
-	if c.config.Bugs.ExpectPQExperimentSignal != serverExtensions.pqExperimentSignal {
-		return fmt.Errorf("tls: PQ experiment signal presence (%t) was not what was expected", serverExtensions.pqExperimentSignal)
 	}
 
 	return nil
@@ -2002,24 +1992,18 @@ func writeIntPadded(b []byte, x *big.Int) {
 }
 
 func generatePSKBinders(version uint16, hello *clientHelloMsg, pskCipherSuite *cipherSuite, psk, firstClientHello, helloRetryRequest []byte, config *Config) {
-	maybeCorruptBinder := !config.Bugs.OnlyCorruptSecondPSKBinder || len(firstClientHello) > 0
+	if config.Bugs.SendNoPSKBinder {
+		return
+	}
+
 	binderLen := pskCipherSuite.hash().Size()
+	if config.Bugs.SendShortPSKBinder {
+		binderLen--
+	}
+
 	numBinders := 1
-	if maybeCorruptBinder {
-		if config.Bugs.SendNoPSKBinder {
-			// The binders may have been set from the previous
-			// ClientHello.
-			hello.pskBinders = nil
-			return
-		}
-
-		if config.Bugs.SendShortPSKBinder {
-			binderLen--
-		}
-
-		if config.Bugs.SendExtraPSKBinder {
-			numBinders++
-		}
+	if config.Bugs.SendExtraPSKBinder {
+		numBinders++
 	}
 
 	// Fill hello.pskBinders with appropriate length arrays of zeros so the
@@ -2034,13 +2018,11 @@ func generatePSKBinders(version uint16, hello *clientHelloMsg, pskCipherSuite *c
 	binderSize := len(hello.pskBinders)*(binderLen+1) + 2
 	truncatedHello := helloBytes[:len(helloBytes)-binderSize]
 	binder := computePSKBinder(psk, version, resumptionPSKBinderLabel, pskCipherSuite, firstClientHello, helloRetryRequest, truncatedHello)
-	if maybeCorruptBinder {
-		if config.Bugs.SendShortPSKBinder {
-			binder = binder[:binderLen]
-		}
-		if config.Bugs.SendInvalidPSKBinder {
-			binder[0] ^= 1
-		}
+	if config.Bugs.SendShortPSKBinder {
+		binder = binder[:binderLen]
+	}
+	if config.Bugs.SendInvalidPSKBinder {
+		binder[0] ^= 1
 	}
 
 	for i := range hello.pskBinders {

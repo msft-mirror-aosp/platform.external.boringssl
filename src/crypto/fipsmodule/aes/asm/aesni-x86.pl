@@ -84,7 +84,7 @@ open OUT,">$output";
 &asm_init($ARGV[0]);
 
 &external_label("OPENSSL_ia32cap_P");
-&preprocessor_ifdef("BORINGSSL_DISPATCH_TEST")
+&preprocessor_ifndef("NDEBUG")
 &external_label("BORINGSSL_function_hit");
 &preprocessor_endif();
 &static_label("key_const");
@@ -2551,4 +2551,4 @@ if ($PREFIX eq $AESNI_PREFIX) {
 
 &asm_finish();
 
-close STDOUT or die "error closing STDOUT";
+close STDOUT;

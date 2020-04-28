@@ -95,7 +95,6 @@ crypto_sources := \
   src/crypto/dsa/dsa.c\
   src/crypto/dsa/dsa_asn1.c\
   src/crypto/ec_extra/ec_asn1.c\
-  src/crypto/ec_extra/ec_derive.c\
   src/crypto/ecdh_extra/ecdh_extra.c\
   src/crypto/ecdsa_extra/ecdsa_asn1.c\
   src/crypto/engine/engine.c\
@@ -111,15 +110,12 @@ crypto_sources := \
   src/crypto/evp/p_ed25519_asn1.c\
   src/crypto/evp/p_rsa.c\
   src/crypto/evp/p_rsa_asn1.c\
-  src/crypto/evp/p_x25519.c\
-  src/crypto/evp/p_x25519_asn1.c\
   src/crypto/evp/pbkdf.c\
   src/crypto/evp/print.c\
   src/crypto/evp/scrypt.c\
   src/crypto/evp/sign.c\
   src/crypto/ex_data.c\
   src/crypto/fipsmodule/bcm.c\
-  src/crypto/fipsmodule/fips_shared_support.c\
   src/crypto/fipsmodule/is_fips.c\
   src/crypto/hkdf/hkdf.c\
   src/crypto/hrss/hrss.c\
@@ -154,7 +150,6 @@ crypto_sources := \
   src/crypto/refcount_lock.c\
   src/crypto/rsa_extra/rsa_asn1.c\
   src/crypto/rsa_extra/rsa_print.c\
-  src/crypto/siphash/siphash.c\
   src/crypto/stack/stack.c\
   src/crypto/thread.c\
   src/crypto/thread_none.c\
@@ -322,7 +317,6 @@ linux_arm_sources := \
   linux-arm/crypto/fipsmodule/sha1-armv4-large.S\
   linux-arm/crypto/fipsmodule/sha256-armv4.S\
   linux-arm/crypto/fipsmodule/sha512-armv4.S\
-  linux-arm/crypto/fipsmodule/vpaes-armv7.S\
   linux-arm/crypto/test/trampoline-armv4.S\
   src/crypto/curve25519/asm/x25519-asm-arm.S\
   src/crypto/poly1305/poly1305_arm_asm.S\

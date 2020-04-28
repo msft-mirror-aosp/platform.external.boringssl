@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/subtle"
@@ -18,6 +17,8 @@ import (
 	"io"
 	"math/big"
 	"time"
+
+	"boringssl.googlesource.com/boringssl/ssl/test/runner/ed25519"
 )
 
 // serverHandshakeState contains details of a server handshake in progress.
@@ -209,7 +210,7 @@ func (hs *serverHandshakeState) readClientHello() error {
 
 	if config.Bugs.FailIfCECPQ2Offered {
 		for _, offeredCurve := range hs.clientHello.supportedCurves {
-			if isPqGroup(offeredCurve) {
+			if offeredCurve == CurveCECPQ2 {
 				return errors.New("tls: CECPQ2 was offered")
 			}
 		}
@@ -225,10 +226,6 @@ func (hs *serverHandshakeState) readClientHello() error {
 				return fmt.Errorf("tls: key share #%d is for group %d, not %d", i, found, group)
 			}
 		}
-	}
-
-	if c.config.Bugs.ExpectPQExperimentSignal != hs.clientHello.pqExperimentSignal {
-		return fmt.Errorf("tls: PQ experiment signal presence (%t) was not what was expected", hs.clientHello.pqExperimentSignal)
 	}
 
 	c.clientVersion = hs.clientHello.vers
@@ -725,7 +722,16 @@ ResendHelloRetryRequest:
 			}
 
 			c.earlyCipherSuite = hs.suite
-			for _, expectedMsg := range config.Bugs.ExpectEarlyData {
+			expectEarlyData := config.Bugs.ExpectEarlyData
+			if n := config.Bugs.ExpectEarlyKeyingMaterial; n > 0 {
+				exporter, err := c.ExportEarlyKeyingMaterial(n, []byte(config.Bugs.ExpectEarlyKeyingLabel), []byte(config.Bugs.ExpectEarlyKeyingContext))
+				if err != nil {
+					return err
+				}
+				expectEarlyData = append([][]byte{exporter}, expectEarlyData...)
+			}
+
+			for _, expectedMsg := range expectEarlyData {
 				if err := c.readRecord(recordTypeApplicationData); err != nil {
 					return err
 				}
@@ -1226,7 +1232,7 @@ func (hs *serverHandshakeState) processClientHello() (isResume bool, err error) 
 	preferredCurves := config.curvePreferences()
 Curves:
 	for _, curve := range hs.clientHello.supportedCurves {
-		if isPqGroup(curve) && c.vers < VersionTLS13 {
+		if curve == CurveCECPQ2 && c.vers < VersionTLS13 {
 			// CECPQ2 is TLS 1.3-only.
 			continue
 		}
@@ -1450,7 +1456,6 @@ func (hs *serverHandshakeState) processClientExtensions(serverExtensions *server
 	}
 
 	serverExtensions.serverNameAck = c.config.Bugs.SendServerNameAck
-	serverExtensions.pqExperimentSignal = hs.clientHello.pqExperimentSignal
 
 	return nil
 }
@@ -2056,7 +2061,7 @@ func (hs *serverHandshakeState) processCertsFromClient(certificates [][]byte) (c
 	}
 
 	if len(certs) > 0 {
-		pub := certs[0].PublicKey
+		pub := getCertificatePublicKey(certs[0])
 		switch pub.(type) {
 		case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey:
 			break
