@@ -424,6 +424,8 @@ static const char *EarlyDataReasonToString(ssl_early_data_reason_t reason) {
       return "token_binding";
     case ssl_early_data_ticket_age_skew:
       return "ticket_age_skew";
+    case ssl_early_data_quic_parameter_mismatch:
+      return "quic_parameter_mismatch";
   }
 
   abort();
@@ -522,19 +524,21 @@ static bool CheckHandshakeProperties(SSL *ssl, bool is_resume,
     }
   }
 
-  if (!config->is_server) {
-    const uint8_t *alpn_proto;
-    unsigned alpn_proto_len;
-    SSL_get0_alpn_selected(ssl, &alpn_proto, &alpn_proto_len);
-    if (alpn_proto_len != config->expect_alpn.size() ||
-        OPENSSL_memcmp(alpn_proto, config->expect_alpn.data(),
-                       alpn_proto_len) != 0) {
-      fprintf(stderr, "negotiated alpn proto mismatch\n");
-      return false;
-    }
+  // On the server, the protocol selected in the ALPN callback must be echoed
+  // out of |SSL_get0_alpn_selected|. On the client, it should report what the
+  // test expected.
+  const std::string &expect_alpn =
+      config->is_server ? config->select_alpn : config->expect_alpn;
+  const uint8_t *alpn_proto;
+  unsigned alpn_proto_len;
+  SSL_get0_alpn_selected(ssl, &alpn_proto, &alpn_proto_len);
+  if (alpn_proto_len != expect_alpn.size() ||
+      OPENSSL_memcmp(alpn_proto, expect_alpn.data(), alpn_proto_len) != 0) {
+    fprintf(stderr, "negotiated alpn proto mismatch\n");
+    return false;
   }
 
-  if (!config->expect_quic_transport_params.empty()) {
+  if (!config->expect_quic_transport_params.empty() && expect_handshake_done) {
     const uint8_t *peer_params;
     size_t peer_params_len;
     SSL_get_peer_quic_transport_params(ssl, &peer_params, &peer_params_len);
@@ -800,6 +804,12 @@ static bool DoConnection(bssl::UniquePtr<SSL_SESSION> *out_session,
   }
 
   if (!ret) {
+    // Print the |SSL_get_error| code. Otherwise, some failures are silent and
+    // hard to debug.
+    int ssl_err = SSL_get_error(ssl.get(), -1);
+    if (ssl_err != SSL_ERROR_NONE) {
+      fprintf(stderr, "SSL error: %s\n", SSL_error_description(ssl_err));
+    }
     return false;
   }
 
@@ -1194,6 +1204,16 @@ int main(int argc, char **argv) {
     printf("No\n");
 #endif
     return 0;
+  }
+
+  if (initial_config.wait_for_debugger) {
+#if defined(OPENSSL_WINDOWS)
+    fprintf(stderr, "-wait-for-debugger is not supported on Windows.\n");
+    return 1;
+#else
+    // The debugger will resume the process.
+    raise(SIGSTOP);
+#endif
   }
 
   bssl::UniquePtr<SSL_CTX> ssl_ctx;
