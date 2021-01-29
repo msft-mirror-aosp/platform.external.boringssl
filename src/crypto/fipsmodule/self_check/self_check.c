@@ -21,6 +21,8 @@
 #include <openssl/aes.h>
 #include <openssl/bn.h>
 #include <openssl/des.h>
+#include <openssl/digest.h>
+#include <openssl/ec.h>
 #include <openssl/ecdsa.h>
 #include <openssl/ec_key.h>
 #include <openssl/nid.h>
@@ -30,6 +32,7 @@
 #include "../../internal.h"
 #include "../ec/internal.h"
 #include "../rand/internal.h"
+#include "../tls/internal.h"
 
 
 // MSVC wants to put a NUL byte at the end of non-char arrays and so cannot
@@ -430,11 +433,68 @@ int boringssl_fips_self_test(
       0xba, 0x4d, 0xd9, 0x86, 0x77, 0xda, 0x7d, 0x8f, 0xef, 0xc4, 0x1a,
       0xf0, 0xcc, 0x81, 0xe5, 0xea, 0x3f, 0xc2, 0x41, 0x7f, 0xd8,
   };
+  // kP256Point is SHA256("Primitive Z Computation KAT")×G within P-256.
+  const uint8_t kP256Point[65] = {
+      0x04, 0x4e, 0xc1, 0x94, 0x8c, 0x5c, 0xf4, 0x37, 0x35, 0x0d, 0xa3,
+      0xf9, 0x55, 0xf9, 0x8b, 0x26, 0x23, 0x5c, 0x43, 0xe0, 0x83, 0x51,
+      0x2b, 0x0d, 0x4b, 0x56, 0x24, 0xc3, 0xe4, 0xa5, 0xa8, 0xe2, 0xe9,
+      0x95, 0xf2, 0xc4, 0xb9, 0xb7, 0x48, 0x7d, 0x2a, 0xae, 0xc5, 0xc0,
+      0x0a, 0xcc, 0x1b, 0xd0, 0xec, 0xb8, 0xdc, 0xbe, 0x0c, 0xbe, 0x52,
+      0x79, 0x93, 0x7c, 0x0b, 0x92, 0x2b, 0x7f, 0x17, 0xa5, 0x80,
+  };
+  // kP256Scalar is SHA256("Primitive Z Computation KAT scalar").
+  const uint8_t kP256Scalar[32] = {
+      0xe7, 0x60, 0x44, 0x91, 0x26, 0x9a, 0xfb, 0x5b, 0x10, 0x2d, 0x6e,
+      0xa5, 0x2c, 0xb5, 0x9f, 0xeb, 0x70, 0xae, 0xde, 0x6c, 0xe3, 0xbf,
+      0xb3, 0xe0, 0x10, 0x54, 0x85, 0xab, 0xd8, 0x61, 0xd7, 0x7b,
+  };
+  // kP256PointResult is |kP256Scalar|×|kP256Point|.
+  const uint8_t kP256PointResult[65] = {
+      0x04, 0xf1, 0x63, 0x00, 0x88, 0xc5, 0xd5, 0xe9, 0x05, 0x52, 0xac,
+      0xb6, 0xec, 0x68, 0x76, 0xb8, 0x73, 0x7f, 0x0f, 0x72, 0x34, 0xe6,
+      0xbb, 0x30, 0x32, 0x22, 0x37, 0xb6, 0x2a, 0x80, 0xe8, 0x9e, 0x6e,
+      0x6f, 0x36, 0x02, 0xe7, 0x21, 0xd2, 0x31, 0xdb, 0x94, 0x63, 0xb7,
+      0xd8, 0x19, 0x0e, 0xc2, 0xc0, 0xa7, 0x2f, 0x15, 0x49, 0x1a, 0xa2,
+      0x7c, 0x41, 0x8f, 0xaf, 0x9c, 0x40, 0xaf, 0x2e, 0x4a,
+#if !defined(BORINGSSL_FIPS_BREAK_Z_COMPUTATION)
+      0x0c,
+#else
+      0x00,
+#endif
+  };
+  const uint8_t kTLSOutput[32] = {
+      0x67, 0x85, 0xde, 0x60, 0xfc, 0x0a, 0x83, 0xe9, 0xa2, 0x2a, 0xb3,
+      0xf0, 0x27, 0x0c, 0xba, 0xf7, 0xfa, 0x82, 0x3d, 0x14, 0x77, 0x1d,
+      0x86, 0x29, 0x79, 0x39, 0x77, 0x8a, 0xd5, 0x0e, 0x9d,
+#if !defined(BORINGSSL_FIPS_BREAK_TLS_KDF)
+      0x32,
+#else
+      0x00,
+#endif
+  };
+  const uint8_t kTLSSecret[32] = {
+      0xbf, 0xe4, 0xb7, 0xe0, 0x26, 0x55, 0x5f, 0x6a, 0xdf, 0x5d, 0x27,
+      0xd6, 0x89, 0x99, 0x2a, 0xd6, 0xf7, 0x65, 0x66, 0x07, 0x4b, 0x55,
+      0x5f, 0x64, 0x55, 0xcd, 0xd5, 0x77, 0xa4, 0xc7, 0x09, 0x61,
+  };
+  const char kTLSLabel[] = "FIPS self test";
+  const uint8_t kTLSSeed1[16] = {
+      0x8f, 0x0d, 0xe8, 0xb6, 0x90, 0x8f, 0xb1, 0xd2,
+      0x6d, 0x51, 0xf4, 0x79, 0x18, 0x63, 0x51, 0x65,
+  };
+  const uint8_t kTLSSeed2[16] = {
+      0x7d, 0x24, 0x1a, 0x9d, 0x3c, 0x59, 0xbf, 0x3c,
+      0x31, 0x1e, 0x2b, 0x21, 0x41, 0x8d, 0x32, 0x81,
+  };
 
   EVP_AEAD_CTX aead_ctx;
   EVP_AEAD_CTX_zero(&aead_ctx);
   RSA *rsa_key = NULL;
   EC_KEY *ec_key = NULL;
+  EC_GROUP *ec_group = NULL;
+  EC_POINT *ec_point_in = NULL;
+  EC_POINT *ec_point_out = NULL;
+  BIGNUM *ec_scalar = NULL;
   ECDSA_SIG *sig = NULL;
   int ret = 0;
 
@@ -577,7 +637,7 @@ int boringssl_fips_self_test(
     goto err;
   }
 
-  // ECDSA Sign/Verify PWCT
+  // ECDSA Sign/Verify KAT
 
   // The 'k' value for ECDSA is fixed to avoid an entropy draw.
   ec_key->fixed_k = BN_new();
@@ -598,7 +658,37 @@ int boringssl_fips_self_test(
       !BN_bn2bin(sig->s, ecdsa_s_bytes) ||
       !check_test(kECDSASigR, ecdsa_r_bytes, sizeof(kECDSASigR), "ECDSA R") ||
       !check_test(kECDSASigS, ecdsa_s_bytes, sizeof(kECDSASigS), "ECDSA S")) {
-    fprintf(stderr, "ECDSA KAT failed.\n");
+    fprintf(stderr, "ECDSA signature KAT failed.\n");
+    goto err;
+  }
+
+  if (!ECDSA_do_verify(kPlaintextSHA256, sizeof(kPlaintextSHA256), sig,
+                       ec_key)) {
+    fprintf(stderr, "ECDSA verification KAT failed.\n");
+    goto err;
+  }
+
+  // Primitive Z Computation KAT (IG 9.6).
+  ec_group = EC_GROUP_new_by_curve_name(NID_X9_62_prime256v1);
+  if (ec_group == NULL) {
+    fprintf(stderr, "Failed to create P-256 group.\n");
+    goto err;
+  }
+  ec_point_in = EC_POINT_new(ec_group);
+  ec_point_out = EC_POINT_new(ec_group);
+  ec_scalar = BN_new();
+  uint8_t z_comp_result[65];
+  if (ec_point_in == NULL || ec_point_out == NULL || ec_scalar == NULL ||
+      !EC_POINT_oct2point(ec_group, ec_point_in, kP256Point, sizeof(kP256Point),
+                          NULL) ||
+      !BN_bin2bn(kP256Scalar, sizeof(kP256Scalar), ec_scalar) ||
+      !EC_POINT_mul(ec_group, ec_point_out, NULL, ec_point_in, ec_scalar,
+                    NULL) ||
+      !EC_POINT_point2oct(ec_group, ec_point_out, POINT_CONVERSION_UNCOMPRESSED,
+                          z_comp_result, sizeof(z_comp_result), NULL) ||
+      !check_test(kP256PointResult, z_comp_result, sizeof(z_comp_result),
+                  "Z Computation Result")) {
+    fprintf(stderr, "Z Computation KAT failed.\n");
     goto err;
   }
 
@@ -626,6 +716,17 @@ int boringssl_fips_self_test(
     goto err;
   }
 
+  // TLS KDF KAT
+  uint8_t tls_output[sizeof(kTLSOutput)];
+  if (!CRYPTO_tls1_prf(EVP_sha256(), tls_output, sizeof(tls_output), kTLSSecret,
+                       sizeof(kTLSSecret), kTLSLabel, sizeof(kTLSLabel),
+                       kTLSSeed1, sizeof(kTLSSeed1), kTLSSeed2,
+                       sizeof(kTLSSeed2)) ||
+      !check_test(kTLSOutput, tls_output, sizeof(kTLSOutput), "TLS KDF KAT")) {
+    fprintf(stderr, "TLS KDF failed.\n");
+    goto err;
+  }
+
   ret = 1;
 
 #if defined(BORINGSSL_FIPS_SELF_TEST_FLAG_FILE)
@@ -642,6 +743,10 @@ err:
   EVP_AEAD_CTX_cleanup(&aead_ctx);
   RSA_free(rsa_key);
   EC_KEY_free(ec_key);
+  EC_POINT_free(ec_point_in);
+  EC_POINT_free(ec_point_out);
+  EC_GROUP_free(ec_group);
+  BN_free(ec_scalar);
   ECDSA_SIG_free(sig);
 
   return ret;

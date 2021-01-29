@@ -54,12 +54,15 @@ type processorType int
 const (
 	ppc64le processorType = iota + 1
 	x86_64
+	aarch64
 )
 
 // delocation holds the state needed during a delocation operation.
 type delocation struct {
 	processor processorType
 	output    stringWriter
+	// commentIndicator starts a comment, e.g. "//" or "#"
+	commentIndicator string
 
 	// symbols is the set of symbols defined in the module.
 	symbols map[string]struct{}
@@ -80,6 +83,13 @@ type delocation struct {
 	// “delta” symbols: symbols that contain the offset from their location
 	// to the memory in question.
 	gotExternalsNeeded map[string]struct{}
+	// gotDeltaNeeded is true if the code needs to load the value of
+	// _GLOBAL_OFFSET_TABLE_.
+	gotDeltaNeeded bool
+	// gotOffsetsNeeded contains the symbols whose @GOT offsets are needed.
+	gotOffsetsNeeded map[string]struct{}
+	// gotOffOffsetsNeeded contains the symbols whose @GOTOFF offsets are needed.
+	gotOffOffsetsNeeded map[string]struct{}
 
 	currentInput inputFile
 }
@@ -97,7 +107,7 @@ func (d *delocation) writeNode(node *node32) {
 
 func (d *delocation) writeCommentedNode(node *node32) {
 	line := d.contents(node)
-	if _, err := d.output.WriteString("# WAS " + strings.TrimSpace(line) + "\n"); err != nil {
+	if _, err := d.output.WriteString(d.commentIndicator + " WAS " + strings.TrimSpace(line) + "\n"); err != nil {
 		panic(err)
 	}
 }
@@ -1217,6 +1227,59 @@ Args:
 
 			args = append(args, argStr)
 
+		case ruleGOTLocation:
+			if instructionName != "movabsq" {
+				return nil, fmt.Errorf("_GLOBAL_OFFSET_TABLE_ lookup didn't use movabsq")
+			}
+			if i != 0 || len(argNodes) != 2 {
+				return nil, fmt.Errorf("movabs of _GLOBAL_OFFSET_TABLE_ didn't expected form")
+			}
+
+			d.gotDeltaNeeded = true
+			changed = true
+			instructionName = "movq"
+			assertNodeType(arg.up, ruleLocalSymbol)
+			baseSymbol := d.mapLocalSymbol(d.contents(arg.up))
+			targetReg := d.contents(argNodes[1])
+			args = append(args, ".Lboringssl_got_delta(%rip)")
+			wrappers = append(wrappers, func(k func()) {
+				k()
+				d.output.WriteString(fmt.Sprintf("\taddq $.Lboringssl_got_delta-%s, %s\n", baseSymbol, targetReg))
+			})
+
+		case ruleGOTSymbolOffset:
+			if instructionName != "movabsq" {
+				return nil, fmt.Errorf("_GLOBAL_OFFSET_TABLE_ offset didn't use movabsq")
+			}
+			if i != 0 || len(argNodes) != 2 {
+				return nil, fmt.Errorf("movabs of _GLOBAL_OFFSET_TABLE_ offset didn't have expected form")
+			}
+
+			assertNodeType(arg.up, ruleSymbolName)
+			symbol := d.contents(arg.up)
+			if strings.HasPrefix(symbol, ".L") {
+				symbol = d.mapLocalSymbol(symbol)
+			}
+			targetReg := d.contents(argNodes[1])
+
+			var prefix string
+			isGOTOFF := strings.HasSuffix(d.contents(arg), "@GOTOFF")
+			if isGOTOFF {
+				prefix = "gotoff"
+				d.gotOffOffsetsNeeded[symbol] = struct{}{}
+			} else {
+				prefix = "got"
+				d.gotOffsetsNeeded[symbol] = struct{}{}
+			}
+			changed = true
+
+			wrappers = append(wrappers, func(k func()) {
+				// Even if one tries to use 32-bit GOT offsets, Clang's linker (at the time
+				// of writing) emits 64-bit relocations anyway, so the following four bytes
+				// get stomped. Thus we use 64-bit offsets.
+				d.output.WriteString(fmt.Sprintf("\tmovq .Lboringssl_%s_%s(%%rip), %s\n", prefix, symbol, targetReg))
+			})
+
 		default:
 			panic(fmt.Sprintf("unknown instruction argument type %q", rul3s[arg.pegRule]))
 		}
@@ -1371,15 +1434,23 @@ func transform(w stringWriter, inputs []inputFile) error {
 		processor = detectProcessor(inputs[0])
 	}
 
+	commentIndicator := "#"
+	if processor == aarch64 {
+		commentIndicator = "//"
+	}
+
 	d := &delocation{
-		symbols:            symbols,
-		localEntrySymbols:  localEntrySymbols,
-		processor:          processor,
-		output:             w,
-		redirectors:        make(map[string]string),
-		bssAccessorsNeeded: make(map[string]string),
-		tocLoaders:         make(map[string]struct{}),
-		gotExternalsNeeded: make(map[string]struct{}),
+		symbols:             symbols,
+		localEntrySymbols:   localEntrySymbols,
+		processor:           processor,
+		commentIndicator:    commentIndicator,
+		output:              w,
+		redirectors:         make(map[string]string),
+		bssAccessorsNeeded:  make(map[string]string),
+		tocLoaders:          make(map[string]struct{}),
+		gotExternalsNeeded:  make(map[string]struct{}),
+		gotOffsetsNeeded:    make(map[string]struct{}),
+		gotOffOffsetsNeeded: make(map[string]struct{}),
 	}
 
 	w.WriteString(".text\n")
@@ -1501,6 +1572,20 @@ func transform(w stringWriter, inputs []inputFile) error {
 		w.WriteString(".size OPENSSL_ia32cap_addr_delta, 8\n")
 		w.WriteString("OPENSSL_ia32cap_addr_delta:\n")
 		w.WriteString(".quad OPENSSL_ia32cap_P-OPENSSL_ia32cap_addr_delta\n")
+
+		if d.gotDeltaNeeded {
+			w.WriteString(".Lboringssl_got_delta:\n")
+			w.WriteString("\t.quad _GLOBAL_OFFSET_TABLE_-.Lboringssl_got_delta\n")
+		}
+
+		for _, name := range sortedSet(d.gotOffsetsNeeded) {
+			w.WriteString(".Lboringssl_got_" + name + ":\n")
+			w.WriteString("\t.quad " + name + "@GOT\n")
+		}
+		for _, name := range sortedSet(d.gotOffOffsetsNeeded) {
+			w.WriteString(".Lboringssl_gotoff_" + name + ":\n")
+			w.WriteString("\t.quad " + name + "@GOTOFF\n")
+		}
 	}
 
 	w.WriteString(".type BORINGSSL_bcm_text_hash, @object\n")
