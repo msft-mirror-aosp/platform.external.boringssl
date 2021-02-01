@@ -6,12 +6,14 @@
 set(
   CRYPTO_TEST_DATA
 
+  crypto/blake2/blake2b256_tests.txt
   crypto/cipher_extra/test/aes_128_cbc_sha1_tls_implicit_iv_tests.txt
   crypto/cipher_extra/test/aes_128_cbc_sha1_tls_tests.txt
   crypto/cipher_extra/test/aes_128_cbc_sha256_tls_tests.txt
   crypto/cipher_extra/test/aes_128_ccm_bluetooth_tests.txt
   crypto/cipher_extra/test/aes_128_ccm_bluetooth_8_tests.txt
   crypto/cipher_extra/test/aes_128_ctr_hmac_sha256.txt
+  crypto/cipher_extra/test/aes_128_gcm_randnonce_tests.txt
   crypto/cipher_extra/test/aes_128_gcm_siv_tests.txt
   crypto/cipher_extra/test/aes_128_gcm_tests.txt
   crypto/cipher_extra/test/aes_192_gcm_tests.txt
@@ -20,6 +22,7 @@ set(
   crypto/cipher_extra/test/aes_256_cbc_sha256_tls_tests.txt
   crypto/cipher_extra/test/aes_256_cbc_sha384_tls_tests.txt
   crypto/cipher_extra/test/aes_256_ctr_hmac_sha256.txt
+  crypto/cipher_extra/test/aes_256_gcm_randnonce_tests.txt
   crypto/cipher_extra/test/aes_256_gcm_siv_tests.txt
   crypto/cipher_extra/test/aes_256_gcm_tests.txt
   crypto/cipher_extra/test/chacha20_poly1305_tests.txt
