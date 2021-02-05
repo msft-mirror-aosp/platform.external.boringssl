@@ -57,6 +57,7 @@ crypto_sources := \
   src/crypto/bio/printf.c\
   src/crypto/bio/socket.c\
   src/crypto/bio/socket_helper.c\
+  src/crypto/blake2/blake2.c\
   src/crypto/bn_extra/bn_asn1.c\
   src/crypto/bn_extra/convert.c\
   src/crypto/buf/buf.c\
@@ -81,6 +82,7 @@ crypto_sources := \
   src/crypto/conf/conf.c\
   src/crypto/cpu-aarch64-fuchsia.c\
   src/crypto/cpu-aarch64-linux.c\
+  src/crypto/cpu-aarch64-win.c\
   src/crypto/cpu-arm-linux.c\
   src/crypto/cpu-arm.c\
   src/crypto/cpu-intel.c\
@@ -88,10 +90,8 @@ crypto_sources := \
   src/crypto/crypto.c\
   src/crypto/curve25519/curve25519.c\
   src/crypto/curve25519/spake25519.c\
-  src/crypto/dh/check.c\
-  src/crypto/dh/dh.c\
-  src/crypto/dh/dh_asn1.c\
-  src/crypto/dh/params.c\
+  src/crypto/dh_extra/dh_asn1.c\
+  src/crypto/dh_extra/params.c\
   src/crypto/digest_extra/digest_extra.c\
   src/crypto/dsa/dsa.c\
   src/crypto/dsa/dsa_asn1.c\
@@ -150,6 +150,7 @@ crypto_sources := \
   src/crypto/rand_extra/deterministic.c\
   src/crypto/rand_extra/forkunsafe.c\
   src/crypto/rand_extra/fuchsia.c\
+  src/crypto/rand_extra/passive.c\
   src/crypto/rand_extra/rand_extra.c\
   src/crypto/rand_extra/windows.c\
   src/crypto/rc4/rc4.c\
