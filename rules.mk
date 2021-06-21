@@ -66,15 +66,12 @@ MODULE_ASMFLAGS += $(MODULE_STATIC_ARMCAP)
 
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES))
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES_$(ARCH)))
-LOCAL_C_INCLUDES := src/crypto src/include
 
-GLOBAL_INCLUDES += $(addprefix $(LOCAL_DIR)/,$(LOCAL_C_INCLUDES))
+MODULE_INCLUDES += $(LOCAL_DIR)/src/crypto
 
-# BoringSSL expects an STL to be available when building for C++11 to provide
-# scopers. Suppress those APIs.
-GLOBAL_CPPFLAGS += -DBORINGSSL_NO_CXX
+MODULE_EXPORT_INCLUDES += $(LOCAL_DIR)/src/include
 
-MODULE_DEPS := \
-	lib/openssl-stubs \
+MODULE_LIBRARY_DEPS += \
+	trusty/user/base/lib/openssl-stubs \
 
-include make/module.mk
+include make/library.mk
