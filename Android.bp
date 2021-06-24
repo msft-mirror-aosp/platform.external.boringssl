@@ -271,6 +271,7 @@ cc_library_static {
         "//bootable/recovery/updater",
         "//external/conscrypt",
         "//external/python/cpython2",
+        "//external/rust/crates/quiche",
         // Strictly, only the *static* toybox for legacy devices should have
         // access to libcrypto_static, but we can't express that.
         "//external/toybox",
@@ -281,9 +282,9 @@ cc_library_static {
         "//hardware/interfaces/keymaster/3.0/vts/functional",
         "//hardware/interfaces/keymaster/4.0/vts/functional",
         "//hardware/interfaces/keymaster/4.1/vts/functional",
+        "//packages/modules/adb",
         "//packages/modules/DnsResolver/tests:__subpackages__",
         "//packages/modules/NeuralNetworks:__subpackages__",
-        "//system/core/adb",
         "//system/core/init",
         "//system/core/fs_mgr/liblp",
         "//system/core/fs_mgr/liblp/vts_core",
