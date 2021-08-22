@@ -129,11 +129,7 @@ cc_object {
         fuzzer: false,
     },
     target: {
-        linux_bionic: {
-            header_libs: ["libc_headers"], // TODO(b/153662223): Clean this up.
-        },
         android: {
-            header_libs: ["libc_headers"], // TODO(b/153662223): Clean this up.
             cflags: [
                 "-DBORINGSSL_FIPS",
                 "-fPIC",
@@ -164,6 +160,7 @@ cc_object {
         "com.android.art.debug",
         "com.android.art.testing",
         "com.android.bluetooth.updatable",
+        "com.android.compos",
         "com.android.conscrypt",
         "com.android.media",
         "com.android.resolv",
@@ -252,6 +249,7 @@ cc_library {
         "com.android.art.debug",
         "com.android.art.testing",
         "com.android.bluetooth.updatable",
+        "com.android.compos",
         "com.android.conscrypt",
         "com.android.media",
         "com.android.resolv",
@@ -424,16 +422,19 @@ cc_binary {
 // Not installed on devices by default.
 cc_binary {
     name: "acvp_modulewrapper",
-    host_supported: true,
     srcs: [
         "src/util/fipstools/acvp/modulewrapper/main.cc",
     ],
     target: {
-        android: {
-            compile_multilib: "both",
+        android_x86: {
+            enabled: false,
+        },
+        android_x86_64: {
+            enabled: false,
         },
     },
     stem: "modulewrapper",
+    compile_multilib: "both",
     multilib: {
         lib32: {
             suffix: "32",

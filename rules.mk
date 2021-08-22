@@ -53,6 +53,10 @@ LOCAL_SRC_FILES := $(filter-out src/crypto/x509/by_dir.c,$(LOCAL_SRC_FILES))
 # no-op threading functions.
 MODULE_CFLAGS += -DTRUSTY
 
+# The AOSP stdatomic.h clang header does not build against musl. Disable C11
+# atomics.
+MODULE_CFLAGS += -D__STDC_NO_ATOMICS__
+
 # Define static armcap based on lk build variables
 MODULE_STATIC_ARMCAP := -DOPENSSL_STATIC_ARMCAP
 toarmcap = $(if $(filter-out 0 false,$(2)),-DOPENSSL_STATIC_ARMCAP_$(1),)
@@ -66,11 +70,12 @@ MODULE_ASMFLAGS += $(MODULE_STATIC_ARMCAP)
 
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES))
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES_$(ARCH)))
-LOCAL_C_INCLUDES := src/crypto src/include
 
-GLOBAL_INCLUDES += $(addprefix $(LOCAL_DIR)/,$(LOCAL_C_INCLUDES))
+MODULE_INCLUDES += $(LOCAL_DIR)/src/crypto
 
-MODULE_DEPS := \
-	lib/openssl-stubs \
+MODULE_EXPORT_INCLUDES += $(LOCAL_DIR)/src/include
 
-include make/module.mk
+MODULE_LIBRARY_DEPS += \
+	trusty/user/base/lib/openssl-stubs \
+
+include make/library.mk
