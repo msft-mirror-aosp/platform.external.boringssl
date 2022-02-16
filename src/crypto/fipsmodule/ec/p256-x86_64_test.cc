@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include <openssl/bn.h>
+#include <openssl/cpu.h>
 #include <openssl/ec.h>
 #include <openssl/mem.h>
 #include <openssl/nid.h>
