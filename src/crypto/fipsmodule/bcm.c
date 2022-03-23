@@ -58,6 +58,8 @@
 #include "cipher/aead.c"
 #include "cipher/cipher.c"
 #include "cipher/e_aes.c"
+#include "cipher/e_des.c"
+#include "des/des.c"
 #include "dh/check.c"
 #include "dh/dh.c"
 #include "digest/digest.c"
@@ -95,7 +97,6 @@
 #include "rsa/padding.c"
 #include "rsa/rsa.c"
 #include "rsa/rsa_impl.c"
-#include "self_check/fips.c"
 #include "self_check/self_check.c"
 #include "sha/sha1-altivec.c"
 #include "sha/sha1.c"
@@ -190,23 +191,16 @@ BORINGSSL_bcm_power_on_self_test(void) {
 #endif
 
   assert_within(rodata_start, kPrimes, rodata_end);
+  assert_within(rodata_start, des_skb, rodata_end);
   assert_within(rodata_start, kP256Params, rodata_end);
   assert_within(rodata_start, kPKCS1SigPrefixes, rodata_end);
 
 #if defined(OPENSSL_AARCH64) || defined(OPENSSL_ANDROID)
   uint8_t result[SHA256_DIGEST_LENGTH];
   const EVP_MD *const kHashFunction = EVP_sha256();
-  if (!boringssl_self_test_sha256() ||
-      !boringssl_self_test_hmac_sha256()) {
-    goto err;
-  }
 #else
   uint8_t result[SHA512_DIGEST_LENGTH];
   const EVP_MD *const kHashFunction = EVP_sha512();
-  if (!boringssl_self_test_sha512() ||
-      !boringssl_self_test_hmac_sha256()) {
-    goto err;
-  }
 #endif
 
   static const uint8_t kHMACKey[64] = {0};
@@ -238,22 +232,22 @@ BORINGSSL_bcm_power_on_self_test(void) {
     fprintf(stderr, "HMAC failed.\n");
     goto err;
   }
-  HMAC_CTX_cleanse(&hmac_ctx); // FIPS 140-3, AS05.10.
+  HMAC_CTX_cleanup(&hmac_ctx);
 
   const uint8_t *expected = BORINGSSL_bcm_text_hash;
 
   if (!check_test(expected, result, sizeof(result), "FIPS integrity test")) {
-#if !defined(BORINGSSL_FIPS_BREAK_TESTS)
     goto err;
-#endif
   }
 
-  OPENSSL_cleanse(result, sizeof(result)); // FIPS 140-3, AS05.10.
+  if (!boringssl_fips_self_test(BORINGSSL_bcm_text_hash, sizeof(result))) {
+    goto err;
+  }
+#else
+  if (!BORINGSSL_self_test()) {
+    goto err;
+  }
 #endif  // OPENSSL_ASAN
-
-  if (!boringssl_self_test_startup()) {
-    goto err;
-  }
 
   return;
 

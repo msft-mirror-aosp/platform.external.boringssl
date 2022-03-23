@@ -943,9 +943,8 @@ static int arbitrary_bignum_to_scalar(const EC_GROUP *group, EC_SCALAR *out,
   return ok;
 }
 
-int ec_point_mul_no_self_test(const EC_GROUP *group, EC_POINT *r,
-                              const BIGNUM *g_scalar, const EC_POINT *p,
-                              const BIGNUM *p_scalar, BN_CTX *ctx) {
+int EC_POINT_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *g_scalar,
+                 const EC_POINT *p, const BIGNUM *p_scalar, BN_CTX *ctx) {
   // Previously, this function set |r| to the point at infinity if there was
   // nothing to multiply. But, nobody should be calling this function with
   // nothing to multiply in the first place.
@@ -1009,13 +1008,6 @@ int ec_point_mul_no_self_test(const EC_GROUP *group, EC_POINT *r,
 err:
   BN_CTX_free(new_ctx);
   return ret;
-}
-
-int EC_POINT_mul(const EC_GROUP *group, EC_POINT *r, const BIGNUM *g_scalar,
-                 const EC_POINT *p, const BIGNUM *p_scalar, BN_CTX *ctx) {
-  boringssl_ensure_ecc_self_test();
-
-  return ec_point_mul_no_self_test(group, r, g_scalar, p, p_scalar, ctx);
 }
 
 int ec_point_mul_scalar_public(const EC_GROUP *group, EC_RAW_POINT *r,
@@ -1239,10 +1231,6 @@ void ec_set_to_safe_point(const EC_GROUP *group, EC_RAW_POINT *out) {
 }
 
 void EC_GROUP_set_asn1_flag(EC_GROUP *group, int flag) {}
-
-int EC_GROUP_get_asn1_flag(const EC_GROUP *group) {
-  return OPENSSL_EC_NAMED_CURVE;
-}
 
 const EC_METHOD *EC_GROUP_method_of(const EC_GROUP *group) {
   // This function exists purely to give callers a way to call
