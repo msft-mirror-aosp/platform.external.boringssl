@@ -171,6 +171,7 @@ void EC_KEY_free(EC_KEY *r) {
   EC_GROUP_free(r->group);
   EC_POINT_free(r->pub_key);
   ec_wrapped_scalar_free(r->priv_key);
+  BN_free(r->fixed_k);
 
   CRYPTO_free_ex_data(g_ec_ex_data_class_bss_get(), r, &r->ex_data);
 
@@ -339,9 +340,9 @@ int EC_KEY_check_fips(const EC_KEY *key) {
   if (key->priv_key) {
     uint8_t data[16] = {0};
     ECDSA_SIG *sig = ECDSA_do_sign(data, sizeof(data), key);
-    if (boringssl_fips_break_test("ECDSA_PWCT")) {
-      data[0] = ~data[0];
-    }
+#if defined(BORINGSSL_FIPS_BREAK_ECDSA_PWCT)
+    data[0] = ~data[0];
+#endif
     int ok = sig != NULL &&
              ECDSA_do_verify(data, sizeof(data), sig, key);
     ECDSA_SIG_free(sig);
@@ -439,8 +440,6 @@ int EC_KEY_generate_key(EC_KEY *key) {
 }
 
 int EC_KEY_generate_key_fips(EC_KEY *eckey) {
-  boringssl_ensure_ecc_self_test();
-
   if (EC_KEY_generate_key(eckey) && EC_KEY_check_fips(eckey)) {
     return 1;
   }
