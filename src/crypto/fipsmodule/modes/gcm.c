@@ -52,6 +52,7 @@
 #include <string.h>
 
 #include <openssl/mem.h>
+#include <openssl/cpu.h>
 
 #include "internal.h"
 #include "../../internal.h"
@@ -72,7 +73,7 @@ static const size_t kSizeTWithoutLower4Bits = (size_t) -16;
 
 #if defined(GHASH_ASM_X86_64) || defined(GHASH_ASM_X86)
 static inline void gcm_reduce_1bit(u128 *V) {
-  if (sizeof(crypto_word_t) == 8) {
+  if (sizeof(size_t) == 8) {
     uint64_t T = UINT64_C(0xe100000000000000) & (0 - (V->hi & 1));
     V->hi = (V->lo << 63) | (V->hi >> 1);
     V->lo = (V->lo >> 1) ^ T;
@@ -152,7 +153,7 @@ void CRYPTO_ghash_init(gmult_func *out_mult, ghash_func *out_hash,
 
 #if defined(GHASH_ASM_X86_64)
   if (crypto_gcm_clmul_enabled()) {
-    if (CRYPTO_is_AVX_capable() && CRYPTO_is_MOVBE_capable()) {
+    if (((OPENSSL_ia32cap_get()[1] >> 22) & 0x41) == 0x41) {  // AVX+MOVBE
       gcm_init_avx(out_table, H.u);
       *out_mult = gcm_gmult_avx;
       *out_hash = gcm_ghash_avx;
@@ -164,7 +165,7 @@ void CRYPTO_ghash_init(gmult_func *out_mult, ghash_func *out_hash,
     *out_hash = gcm_ghash_clmul;
     return;
   }
-  if (CRYPTO_is_SSSE3_capable()) {
+  if (gcm_ssse3_capable()) {
     gcm_init_ssse3(out_table, H.u);
     *out_mult = gcm_gmult_ssse3;
     *out_hash = gcm_ghash_ssse3;
@@ -177,7 +178,7 @@ void CRYPTO_ghash_init(gmult_func *out_mult, ghash_func *out_hash,
     *out_hash = gcm_ghash_clmul;
     return;
   }
-  if (CRYPTO_is_SSSE3_capable()) {
+  if (gcm_ssse3_capable()) {
     gcm_init_ssse3(out_table, H.u);
     *out_mult = gcm_gmult_ssse3;
     *out_hash = gcm_ghash_ssse3;
@@ -376,10 +377,9 @@ int CRYPTO_gcm128_encrypt(GCM128_CONTEXT *ctx, const AES_KEY *key,
       (*block)(ctx->Yi.c, ctx->EKi.c, key);
       ++ctr;
       ctx->Yi.d[3] = CRYPTO_bswap4(ctr);
-      for (size_t i = 0; i < 16; i += sizeof(crypto_word_t)) {
-        CRYPTO_store_word_le(out + i,
-                             CRYPTO_load_word_le(in + i) ^
-                                 ctx->EKi.t[i / sizeof(crypto_word_t)]);
+      for (size_t i = 0; i < 16; i += sizeof(size_t)) {
+        store_word_le(out + i,
+                      load_word_le(in + i) ^ ctx->EKi.t[i / sizeof(size_t)]);
       }
       out += 16;
       in += 16;
@@ -394,10 +394,9 @@ int CRYPTO_gcm128_encrypt(GCM128_CONTEXT *ctx, const AES_KEY *key,
       (*block)(ctx->Yi.c, ctx->EKi.c, key);
       ++ctr;
       ctx->Yi.d[3] = CRYPTO_bswap4(ctr);
-      for (size_t i = 0; i < 16; i += sizeof(crypto_word_t)) {
-        CRYPTO_store_word_le(out + i,
-                             CRYPTO_load_word_le(in + i) ^
-                                 ctx->EKi.t[i / sizeof(crypto_word_t)]);
+      for (size_t i = 0; i < 16; i += sizeof(size_t)) {
+        store_word_le(out + i,
+                      load_word_le(in + i) ^ ctx->EKi.t[i / sizeof(size_t)]);
       }
       out += 16;
       in += 16;
@@ -469,10 +468,9 @@ int CRYPTO_gcm128_decrypt(GCM128_CONTEXT *ctx, const AES_KEY *key,
       (*block)(ctx->Yi.c, ctx->EKi.c, key);
       ++ctr;
       ctx->Yi.d[3] = CRYPTO_bswap4(ctr);
-      for (size_t i = 0; i < 16; i += sizeof(crypto_word_t)) {
-        CRYPTO_store_word_le(out + i,
-                             CRYPTO_load_word_le(in + i) ^
-                                 ctx->EKi.t[i / sizeof(crypto_word_t)]);
+      for (size_t i = 0; i < 16; i += sizeof(size_t)) {
+        store_word_le(out + i,
+                      load_word_le(in + i) ^ ctx->EKi.t[i / sizeof(size_t)]);
       }
       out += 16;
       in += 16;
@@ -487,10 +485,9 @@ int CRYPTO_gcm128_decrypt(GCM128_CONTEXT *ctx, const AES_KEY *key,
       (*block)(ctx->Yi.c, ctx->EKi.c, key);
       ++ctr;
       ctx->Yi.d[3] = CRYPTO_bswap4(ctr);
-      for (size_t i = 0; i < 16; i += sizeof(crypto_word_t)) {
-        CRYPTO_store_word_le(out + i,
-                             CRYPTO_load_word_le(in + i) ^
-                                 ctx->EKi.t[i / sizeof(crypto_word_t)]);
+      for (size_t i = 0; i < 16; i += sizeof(size_t)) {
+        store_word_le(out + i,
+                      load_word_le(in + i) ^ ctx->EKi.t[i / sizeof(size_t)]);
       }
       out += 16;
       in += 16;
@@ -722,7 +719,9 @@ void CRYPTO_gcm128_tag(GCM128_CONTEXT *ctx, unsigned char *tag, size_t len) {
 #if defined(OPENSSL_X86) || defined(OPENSSL_X86_64)
 int crypto_gcm_clmul_enabled(void) {
 #if defined(GHASH_ASM_X86) || defined(GHASH_ASM_X86_64)
-  return CRYPTO_is_FXSR_capable() && CRYPTO_is_PCLMUL_capable();
+  const uint32_t *ia32cap = OPENSSL_ia32cap_get();
+  return (ia32cap[0] & (1 << 24)) &&  // check FXSR bit
+         (ia32cap[1] & (1 << 1));     // check PCLMULQDQ bit
 #else
   return 0;
 #endif
