@@ -51,7 +51,6 @@ cc_defaults {
         "-DBORINGSSL_SHARED_LIBRARY",
         "-DBORINGSSL_ANDROID_SYSTEM",
         "-DOPENSSL_SMALL",
-        "-D_XOPEN_SOURCE=700",
         "-Werror",
         "-Wno-unused-parameter",
     ],
@@ -61,7 +60,7 @@ cc_defaults {
         "-Werror",
     ],
 
-    conlyflags: ["-std=c99"],
+    c_std: "gnu11",
 
     // Build BoringSSL and its tests against the same STL.
     sdk_version: "9",
@@ -364,6 +363,7 @@ cc_library {
 
     apex_available: [
         "//apex_available:platform",
+        "com.android.bluetooth",
         "com.android.adbd",
         "com.android.conscrypt",
         "com.android.resolv",
@@ -413,53 +413,6 @@ cc_binary {
             suffix: "32",
         },
     },
-}
-
-// Used for CAVP testing for FIPS certification.
-// Not installed on devices by default.
-cc_binary {
-    name: "cavp",
-    host_supported: true,
-    srcs: [
-        "src/util/fipstools/cavp/cavp_aes_gcm_test.cc",
-        "src/util/fipstools/cavp/cavp_aes_test.cc",
-        "src/util/fipstools/cavp/cavp_ctr_drbg_test.cc",
-        "src/util/fipstools/cavp/cavp_ecdsa2_keypair_test.cc",
-        "src/util/fipstools/cavp/cavp_ecdsa2_pkv_test.cc",
-        "src/util/fipstools/cavp/cavp_ecdsa2_siggen_test.cc",
-        "src/util/fipstools/cavp/cavp_ecdsa2_sigver_test.cc",
-        "src/util/fipstools/cavp/cavp_hmac_test.cc",
-        "src/util/fipstools/cavp/cavp_kas_test.cc",
-        "src/util/fipstools/cavp/cavp_keywrap_test.cc",
-        "src/util/fipstools/cavp/cavp_main.cc",
-        "src/util/fipstools/cavp/cavp_rsa2_keygen_test.cc",
-        "src/util/fipstools/cavp/cavp_rsa2_siggen_test.cc",
-        "src/util/fipstools/cavp/cavp_rsa2_sigver_test.cc",
-        "src/util/fipstools/cavp/cavp_sha_monte_test.cc",
-        "src/util/fipstools/cavp/cavp_sha_test.cc",
-        "src/util/fipstools/cavp/cavp_tdes_test.cc",
-        "src/util/fipstools/cavp/cavp_test_util.cc",
-        "src/util/fipstools/cavp/cavp_tlskdf_test.cc",
-    ],
-    target: {
-        android: {
-            compile_multilib: "both",
-        },
-    },
-    multilib: {
-        lib32: {
-            suffix: "32",
-        },
-    },
-
-    shared_libs: [
-        "libcrypto",
-    ],
-
-    defaults: [
-        "boringssl_test_support_sources",
-        "boringssl_flags",
-    ],
 }
 
 // Used for ACVP testing for FIPS certification.
@@ -578,6 +531,6 @@ cc_binary {
         "libcrypto",
     ],
     srcs: [
-        "src/util/fipstools/cavp/test_fips.c",
+        "src/util/fipstools/test_fips.c",
     ],
 }
