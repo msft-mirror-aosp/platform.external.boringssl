@@ -81,47 +81,74 @@ static STACK_OF(OPENSSL_STRING) *get_email(X509_NAME *name,
 static void str_free(OPENSSL_STRING str);
 static int append_ia5(STACK_OF(OPENSSL_STRING) **sk, ASN1_IA5STRING *email);
 
-static int ipv4_from_asc(unsigned char *v4, const char *in);
-static int ipv6_from_asc(unsigned char *v6, const char *in);
+static int ipv4_from_asc(unsigned char v4[4], const char *in);
+static int ipv6_from_asc(unsigned char v6[16], const char *in);
 static int ipv6_cb(const char *elem, int len, void *usr);
 static int ipv6_hex(unsigned char *out, const char *in, int inlen);
 
 /* Add a CONF_VALUE name value pair to stack */
 
-int X509V3_add_value(const char *name, const char *value,
-                     STACK_OF(CONF_VALUE) **extlist)
+static int x509V3_add_len_value(const char *name, const char *value,
+                                size_t value_len, int omit_value,
+                                STACK_OF(CONF_VALUE) **extlist)
 {
     CONF_VALUE *vtmp = NULL;
     char *tname = NULL, *tvalue = NULL;
+    int extlist_was_null = *extlist == NULL;
     if (name && !(tname = OPENSSL_strdup(name)))
-        goto err;
-    if (value && !(tvalue = OPENSSL_strdup(value)))
-        goto err;
+        goto malloc_err;
+    if (!omit_value) {
+        /* |CONF_VALUE| cannot represent strings with NULs. */
+        if (OPENSSL_memchr(value, 0, value_len)) {
+            OPENSSL_PUT_ERROR(X509V3, X509V3_R_INVALID_VALUE);
+            goto err;
+        }
+        tvalue = OPENSSL_strndup(value, value_len);
+        if (tvalue == NULL) {
+            goto malloc_err;
+        }
+    }
     if (!(vtmp = CONF_VALUE_new()))
-        goto err;
+        goto malloc_err;
     if (!*extlist && !(*extlist = sk_CONF_VALUE_new_null()))
-        goto err;
+        goto malloc_err;
     vtmp->section = NULL;
     vtmp->name = tname;
     vtmp->value = tvalue;
     if (!sk_CONF_VALUE_push(*extlist, vtmp))
-        goto err;
+        goto malloc_err;
     return 1;
- err:
+ malloc_err:
     OPENSSL_PUT_ERROR(X509V3, ERR_R_MALLOC_FAILURE);
-    if (vtmp)
-        OPENSSL_free(vtmp);
-    if (tname)
-        OPENSSL_free(tname);
-    if (tvalue)
-        OPENSSL_free(tvalue);
+ err:
+    if (extlist_was_null) {
+        sk_CONF_VALUE_free(*extlist);
+        *extlist = NULL;
+    }
+    OPENSSL_free(vtmp);
+    OPENSSL_free(tname);
+    OPENSSL_free(tvalue);
     return 0;
+}
+
+int X509V3_add_value(const char *name, const char *value,
+                     STACK_OF(CONF_VALUE) **extlist)
+{
+    return x509V3_add_len_value(name, value, value != NULL ? strlen(value) : 0,
+                                /*omit_value=*/value == NULL, extlist);
 }
 
 int X509V3_add_value_uchar(const char *name, const unsigned char *value,
                            STACK_OF(CONF_VALUE) **extlist)
 {
     return X509V3_add_value(name, (const char *)value, extlist);
+}
+
+int x509V3_add_value_asn1_string(const char *name, const ASN1_STRING *value,
+                                 STACK_OF(CONF_VALUE) **extlist)
+{
+    return x509V3_add_len_value(name, (const char *)value->data, value->length,
+                                /*omit_value=*/0, extlist);
 }
 
 /* Free function for STACK_OF(CONF_VALUE) */
@@ -268,7 +295,7 @@ ASN1_INTEGER *s2i_ASN1_INTEGER(X509V3_EXT_METHOD *method, const char *value)
     return aint;
 }
 
-int X509V3_add_value_int(const char *name, ASN1_INTEGER *aint,
+int X509V3_add_value_int(const char *name, const ASN1_INTEGER *aint,
                          STACK_OF(CONF_VALUE) **extlist)
 {
     char *strtmp;
@@ -631,27 +658,45 @@ static void str_free(OPENSSL_STRING str)
 
 static int append_ia5(STACK_OF(OPENSSL_STRING) **sk, ASN1_IA5STRING *email)
 {
-    char *emtmp;
     /* First some sanity checks */
     if (email->type != V_ASN1_IA5STRING)
         return 1;
-    if (!email->data || !email->length)
+    if (email->data == NULL || email->length == 0)
         return 1;
+    /* |OPENSSL_STRING| cannot represent strings with embedded NULs. Do not
+     * report them as outputs. */
+    if (OPENSSL_memchr(email->data, 0, email->length) != NULL)
+        return 1;
+
+    char *emtmp = NULL;
     if (!*sk)
         *sk = sk_OPENSSL_STRING_new(sk_strcmp);
     if (!*sk)
-        return 0;
+        goto err;
+
+    emtmp = OPENSSL_strndup((char *)email->data, email->length);
+    if (emtmp == NULL) {
+        goto err;
+    }
+
     /* Don't add duplicates */
     sk_OPENSSL_STRING_sort(*sk);
-    if (sk_OPENSSL_STRING_find(*sk, NULL, (char *)email->data))
+    if (sk_OPENSSL_STRING_find(*sk, NULL, emtmp)) {
+        OPENSSL_free(emtmp);
         return 1;
-    emtmp = OPENSSL_strdup((char *)email->data);
-    if (!emtmp || !sk_OPENSSL_STRING_push(*sk, emtmp)) {
-        X509_email_free(*sk);
-        *sk = NULL;
-        return 0;
+    }
+    if (!sk_OPENSSL_STRING_push(*sk, emtmp)) {
+        goto err;
     }
     return 1;
+
+err:
+    /* TODO(davidben): Fix the error-handling in this file. It currently relies
+     * on |append_ia5| leaving |*sk| at NULL on error. */
+    OPENSSL_free(emtmp);
+    X509_email_free(*sk);
+    *sk = NULL;
+    return 0;
 }
 
 void X509_email_free(STACK_OF(OPENSSL_STRING) *sk)
@@ -663,44 +708,11 @@ typedef int (*equal_fn) (const unsigned char *pattern, size_t pattern_len,
                          const unsigned char *subject, size_t subject_len,
                          unsigned int flags);
 
-/* Skip pattern prefix to match "wildcard" subject */
-static void skip_prefix(const unsigned char **p, size_t *plen,
-                        const unsigned char *subject, size_t subject_len,
-                        unsigned int flags)
-{
-    const unsigned char *pattern = *p;
-    size_t pattern_len = *plen;
-
-    /*
-     * If subject starts with a leading '.' followed by more octets, and
-     * pattern is longer, compare just an equal-length suffix with the
-     * full subject (starting at the '.'), provided the prefix contains
-     * no NULs.
-     */
-    if ((flags & _X509_CHECK_FLAG_DOT_SUBDOMAINS) == 0)
-        return;
-
-    while (pattern_len > subject_len && *pattern) {
-        if ((flags & X509_CHECK_FLAG_SINGLE_LABEL_SUBDOMAINS) &&
-            *pattern == '.')
-            break;
-        ++pattern;
-        --pattern_len;
-    }
-
-    /* Skip if entire prefix acceptable */
-    if (pattern_len == subject_len) {
-        *p = pattern;
-        *plen = pattern_len;
-    }
-}
-
 /* Compare while ASCII ignoring case. */
 static int equal_nocase(const unsigned char *pattern, size_t pattern_len,
                         const unsigned char *subject, size_t subject_len,
                         unsigned int flags)
 {
-    skip_prefix(&pattern, &pattern_len, subject, subject_len, flags);
     if (pattern_len != subject_len)
         return 0;
     while (pattern_len) {
@@ -729,7 +741,6 @@ static int equal_case(const unsigned char *pattern, size_t pattern_len,
                       const unsigned char *subject, size_t subject_len,
                       unsigned int flags)
 {
-    skip_prefix(&pattern, &pattern_len, subject, subject_len, flags);
     if (pattern_len != subject_len)
         return 0;
     return !OPENSSL_memcmp(pattern, subject, pattern_len);
@@ -776,7 +787,6 @@ static int wildcard_match(const unsigned char *prefix, size_t prefix_len,
     const unsigned char *wildcard_start;
     const unsigned char *wildcard_end;
     const unsigned char *p;
-    int allow_multi = 0;
     int allow_idna = 0;
 
     if (subject_len < prefix_len + suffix_len)
@@ -795,8 +805,6 @@ static int wildcard_match(const unsigned char *prefix, size_t prefix_len,
         if (wildcard_start == wildcard_end)
             return 0;
         allow_idna = 1;
-        if (flags & X509_CHECK_FLAG_MULTI_LABEL_WILDCARDS)
-            allow_multi = 1;
     }
     /* IDNA labels cannot match partial wildcards */
     if (!allow_idna &&
@@ -808,14 +816,13 @@ static int wildcard_match(const unsigned char *prefix, size_t prefix_len,
         return 1;
     /*
      * Check that the part matched by the wildcard contains only
-     * permitted characters and only matches a single label unless
-     * allow_multi is set.
+     * permitted characters and only matches a single label.
      */
     for (p = wildcard_start; p != wildcard_end; ++p)
         if (!(('0' <= *p && *p <= '9') ||
               ('A' <= *p && *p <= 'Z') ||
               ('a' <= *p && *p <= 'z') ||
-              *p == '-' || (allow_multi && *p == '.')))
+              *p == '-'))
             return 0;
     return 1;
 }
@@ -847,12 +854,8 @@ static const unsigned char *valid_star(const unsigned char *p, size_t len,
              */
             if (star != NULL || (state & LABEL_IDNA) != 0 || dots)
                 return NULL;
-            /* Only full-label '*.example.com' wildcards? */
-            if ((flags & X509_CHECK_FLAG_NO_PARTIAL_WILDCARDS)
-                && (!atstart || !atend))
-                return NULL;
-            /* No 'foo*bar' wildcards */
-            if (!atstart && !atend)
+            /* Only full-label '*.example.com' wildcards. */
+            if (!atstart || !atend)
                 return NULL;
             star = &p[i];
             state &= ~LABEL_START;
@@ -1014,17 +1017,12 @@ static int do_x509_check(X509 *x, const char *chk, size_t chklen,
     int rv = 0;
     equal_fn equal;
 
-    /* See below, this flag is internal-only */
-    flags &= ~_X509_CHECK_FLAG_DOT_SUBDOMAINS;
     if (check_type == GEN_EMAIL) {
         cnid = NID_pkcs9_emailAddress;
         alt_type = V_ASN1_IA5STRING;
         equal = equal_email;
     } else if (check_type == GEN_DNS) {
         cnid = NID_commonName;
-        /* Implicit client-side DNS sub-domain pattern */
-        if (chklen > 1 && chk[0] == '.')
-            flags |= _X509_CHECK_FLAG_DOT_SUBDOMAINS;
         alt_type = V_ASN1_IA5STRING;
         if (flags & X509_CHECK_FLAG_NO_WILDCARDS)
             equal = equal_nocase;
@@ -1112,7 +1110,7 @@ int X509_check_ip_asc(X509 *x, const char *ipasc, unsigned int flags)
 
     if (ipasc == NULL)
         return -2;
-    iplen = (size_t)a2i_ipadd(ipout, ipasc);
+    iplen = (size_t)x509v3_a2i_ipadd(ipout, ipasc);
     if (iplen == 0)
         return -2;
     return do_x509_check(x, (char *)ipout, iplen, flags, GEN_IPADD, NULL);
@@ -1120,7 +1118,7 @@ int X509_check_ip_asc(X509 *x, const char *ipasc, unsigned int flags)
 
 /*
  * Convert IP addresses both IPv4 and IPv6 into an OCTET STRING compatible
- * with RFC3280.
+ * with RFC 3280.
  */
 
 ASN1_OCTET_STRING *a2i_IPADDRESS(const char *ipasc)
@@ -1129,10 +1127,7 @@ ASN1_OCTET_STRING *a2i_IPADDRESS(const char *ipasc)
     ASN1_OCTET_STRING *ret;
     int iplen;
 
-    /* If string contains a ':' assume IPv6 */
-
-    iplen = a2i_ipadd(ipout, ipasc);
-
+    iplen = x509v3_a2i_ipadd(ipout, ipasc);
     if (!iplen)
         return NULL;
 
@@ -1161,12 +1156,12 @@ ASN1_OCTET_STRING *a2i_IPADDRESS_NC(const char *ipasc)
     p = iptmp + (p - ipasc);
     *p++ = 0;
 
-    iplen1 = a2i_ipadd(ipout, iptmp);
+    iplen1 = x509v3_a2i_ipadd(ipout, iptmp);
 
     if (!iplen1)
         goto err;
 
-    iplen2 = a2i_ipadd(ipout + iplen1, p);
+    iplen2 = x509v3_a2i_ipadd(ipout + iplen1, p);
 
     OPENSSL_free(iptmp);
     iptmp = NULL;
@@ -1190,7 +1185,7 @@ ASN1_OCTET_STRING *a2i_IPADDRESS_NC(const char *ipasc)
     return NULL;
 }
 
-int a2i_ipadd(unsigned char *ipout, const char *ipasc)
+int x509v3_a2i_ipadd(unsigned char ipout[16], const char *ipasc)
 {
     /* If string contains a ':' assume IPv6 */
 
@@ -1205,7 +1200,7 @@ int a2i_ipadd(unsigned char *ipout, const char *ipasc)
     }
 }
 
-static int ipv4_from_asc(unsigned char *v4, const char *in)
+static int ipv4_from_asc(unsigned char v4[4], const char *in)
 {
     int a0, a1, a2, a3;
     if (sscanf(in, "%d.%d.%d.%d", &a0, &a1, &a2, &a3) != 4)
@@ -1231,7 +1226,7 @@ typedef struct {
     int zero_cnt;
 } IPV6_STAT;
 
-static int ipv6_from_asc(unsigned char *v6, const char *in)
+static int ipv6_from_asc(unsigned char v6[16], const char *in)
 {
     IPV6_STAT v6stat;
     v6stat.total = 0;
