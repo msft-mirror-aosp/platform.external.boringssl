@@ -5,5 +5,4 @@ third_party {
     type: HOMEPAGE
     value: "https://boringssl.googlesource.com/boringssl"
   }
-  license_type: NOTICE
 }

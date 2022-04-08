@@ -20,6 +20,8 @@ LOCAL_PATH := $(GET_LOCAL_DIR)
 
 MODULE := $(LOCAL_DIR)
 
+MODULE_STATIC_LIB := true
+
 TARGET_ARCH := $(ARCH)
 TARGET_2ND_ARCH := $(ARCH)
 
@@ -69,6 +71,10 @@ MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES_$(ARCH)))
 LOCAL_C_INCLUDES := src/crypto src/include
 
 GLOBAL_INCLUDES += $(addprefix $(LOCAL_DIR)/,$(LOCAL_C_INCLUDES))
+
+# BoringSSL expects an STL to be available when building for C++11 to provide
+# scopers. Suppress those APIs.
+GLOBAL_CPPFLAGS += -DBORINGSSL_NO_CXX
 
 MODULE_DEPS := \
 	lib/openssl-stubs \

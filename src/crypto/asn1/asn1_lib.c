@@ -251,8 +251,6 @@ void ASN1_put_object(unsigned char **pp, int constructed, int length, int tag,
 
 int ASN1_put_eoc(unsigned char **pp)
 {
-    /* This function is no longer used in the library, but some external code
-     * uses it. */
     unsigned char *p = *pp;
     *p++ = 0;
     *p++ = 0;
@@ -313,9 +311,9 @@ int ASN1_STRING_copy(ASN1_STRING *dst, const ASN1_STRING *str)
 {
     if (str == NULL)
         return 0;
+    dst->type = str->type;
     if (!ASN1_STRING_set(dst, str->data, str->length))
         return 0;
-    dst->type = str->type;
     dst->flags = str->flags;
     return 1;
 }
@@ -397,12 +395,13 @@ ASN1_STRING *ASN1_STRING_type_new(int type)
     return (ret);
 }
 
-void ASN1_STRING_free(ASN1_STRING *str)
+void ASN1_STRING_free(ASN1_STRING *a)
 {
-    if (str == NULL)
+    if (a == NULL)
         return;
-    OPENSSL_free(str->data);
-    OPENSSL_free(str);
+    if (a->data && !(a->flags & ASN1_STRING_FLAG_NDEF))
+        OPENSSL_free(a->data);
+    OPENSSL_free(a);
 }
 
 int ASN1_STRING_cmp(const ASN1_STRING *a, const ASN1_STRING *b)
@@ -420,22 +419,28 @@ int ASN1_STRING_cmp(const ASN1_STRING *a, const ASN1_STRING *b)
         return (i);
 }
 
-int ASN1_STRING_length(const ASN1_STRING *str)
+int ASN1_STRING_length(const ASN1_STRING *x)
 {
-    return str->length;
+    return M_ASN1_STRING_length(x);
 }
 
-int ASN1_STRING_type(const ASN1_STRING *str)
+void ASN1_STRING_length_set(ASN1_STRING *x, int len)
 {
-    return str->type;
+    M_ASN1_STRING_length_set(x, len);
+    return;
 }
 
-unsigned char *ASN1_STRING_data(ASN1_STRING *str)
+int ASN1_STRING_type(ASN1_STRING *x)
 {
-    return str->data;
+    return M_ASN1_STRING_type(x);
 }
 
-const unsigned char *ASN1_STRING_get0_data(const ASN1_STRING *str)
+unsigned char *ASN1_STRING_data(ASN1_STRING *x)
 {
-    return str->data;
+    return M_ASN1_STRING_data(x);
+}
+
+const unsigned char *ASN1_STRING_get0_data(const ASN1_STRING *x)
+{
+    return x->data;
 }

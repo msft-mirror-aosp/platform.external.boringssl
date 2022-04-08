@@ -63,13 +63,10 @@
 #include <openssl/mem.h>
 
 #include "../internal.h"
-#include "asn1_locl.h"
 
 
 static int asn1_i2d_ex_primitive(ASN1_VALUE **pval, unsigned char **out,
                                  const ASN1_ITEM *it, int tag, int aclass);
-static int asn1_ex_i2c(ASN1_VALUE **pval, unsigned char *cont, int *putype,
-                       const ASN1_ITEM *it);
 static int asn1_set_seq_out(STACK_OF(ASN1_VALUE) *sk, unsigned char **out,
                             int skcontlen, const ASN1_ITEM *item,
                             int do_sort, int iclass);
@@ -79,8 +76,15 @@ static int asn1_item_flags_i2d(ASN1_VALUE *val, unsigned char **out,
                                const ASN1_ITEM *it, int flags);
 
 /*
- * Top level i2d equivalents
+ * Top level i2d equivalents: the 'ndef' variant instructs the encoder to use
+ * indefinite length constructed encoding, where appropriate
  */
+
+int ASN1_item_ndef_i2d(ASN1_VALUE *val, unsigned char **out,
+                       const ASN1_ITEM *it)
+{
+    return asn1_item_flags_i2d(val, out, it, ASN1_TFLG_NDEF);
+}
 
 int ASN1_item_i2d(ASN1_VALUE *val, unsigned char **out, const ASN1_ITEM *it)
 {
@@ -124,7 +128,9 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
                      const ASN1_ITEM *it, int tag, int aclass)
 {
     const ASN1_TEMPLATE *tt = NULL;
-    int i, seqcontlen, seqlen;
+    unsigned char *p = NULL;
+    int i, seqcontlen, seqlen, ndef = 1;
+    const ASN1_COMPAT_FUNCS *cf;
     const ASN1_EXTERN_FUNCS *ef;
     const ASN1_AUX *aux = it->funcs;
     ASN1_aux_cb *asn1_cb = 0;
@@ -145,25 +151,9 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
         break;
 
     case ASN1_ITYPE_MSTRING:
-        /*
-         * It never makes sense for multi-strings to have implicit tagging, so
-         * if tag != -1, then this looks like an error in the template.
-         */
-        if (tag != -1) {
-            OPENSSL_PUT_ERROR(ASN1, ASN1_R_BAD_TEMPLATE);
-            return -1;
-        }
         return asn1_i2d_ex_primitive(pval, out, it, -1, aclass);
 
     case ASN1_ITYPE_CHOICE:
-        /*
-         * It never makes sense for CHOICE types to have implicit tagging, so if
-         * tag != -1, then this looks like an error in the template.
-         */
-        if (tag != -1) {
-            OPENSSL_PUT_ERROR(ASN1, ASN1_R_BAD_TEMPLATE);
-            return -1;
-        }
         if (asn1_cb && !asn1_cb(ASN1_OP_I2D_PRE, pval, it, NULL))
             return 0;
         i = asn1_get_choice_selector(pval, it);
@@ -183,6 +173,26 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
         /* If new style i2d it does all the work */
         ef = it->funcs;
         return ef->asn1_ex_i2d(pval, out, it, tag, aclass);
+
+    case ASN1_ITYPE_COMPAT:
+        /* old style hackery... */
+        cf = it->funcs;
+        if (out)
+            p = *out;
+        i = cf->asn1_i2d(*pval, out);
+        /*
+         * Fixup for IMPLICIT tag: note this messes up for tags > 30, but so
+         * did the old code. Tags > 30 are very rare anyway.
+         */
+        if (out && (tag != -1))
+            *p = aclass | tag | (*p & V_ASN1_CONSTRUCTED);
+        return i;
+
+    case ASN1_ITYPE_NDEF_SEQUENCE:
+        /* Use indefinite length constructed if requested */
+        if (aclass & ASN1_TFLG_NDEF)
+            ndef = 2;
+        OPENSSL_FALLTHROUGH;
 
     case ASN1_ITYPE_SEQUENCE:
         i = asn1_enc_restore(&seqcontlen, out, pval, it);
@@ -218,11 +228,11 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
             seqcontlen += tmplen;
         }
 
-        seqlen = ASN1_object_size(/*constructed=*/1, seqcontlen, tag);
+        seqlen = ASN1_object_size(ndef, seqcontlen, tag);
         if (!out || seqlen == -1)
             return seqlen;
         /* Output SEQUENCE header */
-        ASN1_put_object(out, /*constructed=*/1, seqcontlen, tag, aclass);
+        ASN1_put_object(out, ndef, seqcontlen, tag, aclass);
         for (i = 0, tt = it->templates; i < it->tcount; tt++, i++) {
             const ASN1_TEMPLATE *seqtt;
             ASN1_VALUE **pseqval;
@@ -233,6 +243,8 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
             /* FIXME: check for errors in enhanced version */
             asn1_template_ex_i2d(pseqval, out, seqtt, -1, aclass);
         }
+        if (ndef == 2)
+            ASN1_put_eoc(out);
         if (asn1_cb && !asn1_cb(ASN1_OP_I2D_POST, pval, it, NULL))
             return 0;
         return seqlen;
@@ -247,7 +259,7 @@ int ASN1_item_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
 static int asn1_template_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
                                 const ASN1_TEMPLATE *tt, int tag, int iclass)
 {
-    int i, ret, flags, ttag, tclass;
+    int i, ret, flags, ttag, tclass, ndef;
     size_t j;
     flags = tt->flags;
     /*
@@ -282,6 +294,12 @@ static int asn1_template_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
      * At this point 'ttag' contains the outer tag to use, 'tclass' is the
      * class and iclass is any flags passed to this function.
      */
+
+    /* if template and arguments require ndef, use it */
+    if ((flags & ASN1_TFLG_NDEF) && (iclass & ASN1_TFLG_NDEF))
+        ndef = 2;
+    else
+        ndef = 1;
 
     if (flags & ASN1_TFLG_SK_MASK) {
         /* SET OF, SEQUENCE OF */
@@ -327,12 +345,12 @@ static int asn1_template_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
                 return -1;
             skcontlen += tmplen;
         }
-        sklen = ASN1_object_size(/*constructed=*/1, skcontlen, sktag);
+        sklen = ASN1_object_size(ndef, skcontlen, sktag);
         if (sklen == -1)
             return -1;
         /* If EXPLICIT need length of surrounding tag */
         if (flags & ASN1_TFLG_EXPTAG)
-            ret = ASN1_object_size(/*constructed=*/1, sklen, ttag);
+            ret = ASN1_object_size(ndef, sklen, ttag);
         else
             ret = sklen;
 
@@ -342,12 +360,18 @@ static int asn1_template_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
         /* Now encode this lot... */
         /* EXPLICIT tag */
         if (flags & ASN1_TFLG_EXPTAG)
-            ASN1_put_object(out, /*constructed=*/1, sklen, ttag, tclass);
+            ASN1_put_object(out, ndef, sklen, ttag, tclass);
         /* SET or SEQUENCE and IMPLICIT tag */
-        ASN1_put_object(out, /*constructed=*/1, skcontlen, sktag, skaclass);
+        ASN1_put_object(out, ndef, skcontlen, sktag, skaclass);
         /* And the stuff itself */
         asn1_set_seq_out(sk, out, skcontlen, ASN1_ITEM_ptr(tt->item),
                          isset, iclass);
+        if (ndef == 2) {
+            ASN1_put_eoc(out);
+            if (flags & ASN1_TFLG_EXPTAG)
+                ASN1_put_eoc(out);
+        }
+
         return ret;
     }
 
@@ -358,11 +382,13 @@ static int asn1_template_ex_i2d(ASN1_VALUE **pval, unsigned char **out,
         if (!i)
             return 0;
         /* Find length of EXPLICIT tag */
-        ret = ASN1_object_size(/*constructed=*/1, i, ttag);
+        ret = ASN1_object_size(ndef, i, ttag);
         if (out && ret != -1) {
             /* Output tag and item */
-            ASN1_put_object(out, /*constructed=*/1, i, ttag, tclass);
+            ASN1_put_object(out, ndef, i, ttag, tclass);
             ASN1_item_ex_i2d(pval, out, ASN1_ITEM_ptr(tt->item), -1, iclass);
+            if (ndef == 2)
+                ASN1_put_eoc(out);
         }
         return ret;
     }
@@ -461,6 +487,7 @@ static int asn1_i2d_ex_primitive(ASN1_VALUE **pval, unsigned char **out,
     int len;
     int utype;
     int usetag;
+    int ndef = 0;
 
     utype = it->utype;
 
@@ -486,6 +513,12 @@ static int asn1_i2d_ex_primitive(ASN1_VALUE **pval, unsigned char **out,
     if (len == -1)
         return 0;
 
+    /* -2 return is special meaning use ndef */
+    if (len == -2) {
+        ndef = 2;
+        len = 0;
+    }
+
     /* If not implicitly tagged get tag from underlying type */
     if (tag == -1)
         tag = utype;
@@ -493,20 +526,23 @@ static int asn1_i2d_ex_primitive(ASN1_VALUE **pval, unsigned char **out,
     /* Output tag+length followed by content octets */
     if (out) {
         if (usetag)
-            ASN1_put_object(out, /*constructed=*/0, len, tag, aclass);
+            ASN1_put_object(out, ndef, len, tag, aclass);
         asn1_ex_i2c(pval, *out, &utype, it);
-        *out += len;
+        if (ndef)
+            ASN1_put_eoc(out);
+        else
+            *out += len;
     }
 
     if (usetag)
-        return ASN1_object_size(/*constructed=*/0, len, tag);
+        return ASN1_object_size(ndef, len, tag);
     return len;
 }
 
 /* Produce content octets from a structure */
 
-static int asn1_ex_i2c(ASN1_VALUE **pval, unsigned char *cout, int *putype,
-                       const ASN1_ITEM *it)
+int asn1_ex_i2c(ASN1_VALUE **pval, unsigned char *cout, int *putype,
+                const ASN1_ITEM *it)
 {
     ASN1_BOOLEAN *tbool = NULL;
     ASN1_STRING *strtmp;
@@ -515,10 +551,10 @@ static int asn1_ex_i2c(ASN1_VALUE **pval, unsigned char *cout, int *putype,
     const unsigned char *cont;
     unsigned char c;
     int len;
-
-    /* Historically, |it->funcs| for primitive types contained an
-     * |ASN1_PRIMITIVE_FUNCS| table of callbacks. */
-    assert(it->funcs == NULL);
+    const ASN1_PRIMITIVE_FUNCS *pf;
+    pf = it->funcs;
+    if (pf && pf->prim_i2c)
+        return pf->prim_i2c(pval, cout, putype, it);
 
     /* Should type be omitted? */
     if ((it->itype != ASN1_ITYPE_PRIMITIVE)
@@ -606,6 +642,16 @@ static int asn1_ex_i2c(ASN1_VALUE **pval, unsigned char *cout, int *putype,
     default:
         /* All based on ASN1_STRING and handled the same */
         strtmp = (ASN1_STRING *)*pval;
+        /* Special handling for NDEF */
+        if ((it->size == ASN1_TFLG_NDEF)
+            && (strtmp->flags & ASN1_STRING_FLAG_NDEF)) {
+            if (cout) {
+                strtmp->data = cout;
+                strtmp->length = 0;
+            }
+            /* Special return code */
+            return -2;
+        }
         cont = strtmp->data;
         len = strtmp->length;
 
