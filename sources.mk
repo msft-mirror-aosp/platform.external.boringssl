@@ -20,7 +20,6 @@ crypto_sources := \
   src/crypto/asn1/a_bool.c\
   src/crypto/asn1/a_d2i_fp.c\
   src/crypto/asn1/a_dup.c\
-  src/crypto/asn1/a_enum.c\
   src/crypto/asn1/a_gentm.c\
   src/crypto/asn1/a_i2d_fp.c\
   src/crypto/asn1/a_int.c\
@@ -73,6 +72,7 @@ crypto_sources := \
   src/crypto/cipher_extra/e_aesctrhmac.c\
   src/crypto/cipher_extra/e_aesgcmsiv.c\
   src/crypto/cipher_extra/e_chacha20poly1305.c\
+  src/crypto/cipher_extra/e_des.c\
   src/crypto/cipher_extra/e_null.c\
   src/crypto/cipher_extra/e_rc2.c\
   src/crypto/cipher_extra/e_rc4.c\
@@ -91,6 +91,7 @@ crypto_sources := \
   src/crypto/crypto.c\
   src/crypto/curve25519/curve25519.c\
   src/crypto/curve25519/spake25519.c\
+  src/crypto/des/des.c\
   src/crypto/dh_extra/dh_asn1.c\
   src/crypto/dh_extra/params.c\
   src/crypto/digest_extra/digest_extra.c\
