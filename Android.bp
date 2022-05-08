@@ -493,31 +493,63 @@ cc_library_static {
 // Tests
 cc_test {
     name: "boringssl_crypto_test",
-    test_suites: ["device-tests"],
-    host_supported: true,
+    test_config: "NativeTests.xml",
+    host_supported: false,
+    per_testcase_directory: true,
+    compile_multilib: "both",
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
+        lib64: {
+            suffix: "64",
+        },
+    },
     defaults: [
         "boringssl_crypto_test_sources",
         "boringssl_flags",
     ],
     whole_static_libs: ["boringssl_test_support"],
-
-    shared_libs: ["libcrypto"],
+    // Statically link the library to test to ensure we always pick up the
+    // correct version regardless of device linker configuration.
+    static_libs: ["libcrypto_static"],
+    target: {
+        android: {
+            test_suites: ["mts-conscrypt"],
+        },
+    },
 }
 
 cc_test {
     name: "boringssl_ssl_test",
-    test_suites: ["device-tests"],
-    host_supported: true,
+    test_config: "NativeTests.xml",
+    host_supported: false,
+    per_testcase_directory: true,
+    compile_multilib: "both",
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
+        lib64: {
+            suffix: "64",
+        },
+    },
     defaults: [
         "boringssl_ssl_test_sources",
         "boringssl_flags",
     ],
     whole_static_libs: ["boringssl_test_support"],
-
-    shared_libs: [
-        "libcrypto",
+    // Statically link the libraries to test to ensure we always pick up the
+    // correct version regardless of device linker configuration.
+    static_libs: [
+        "libcrypto_static",
         "libssl",
     ],
+    target: {
+        android: {
+            test_suites: ["mts-conscrypt"],
+        },
+    },
 }
 
 // Utility binary for CMVP on-site testing.
@@ -532,5 +564,65 @@ cc_binary {
     ],
     srcs: [
         "src/util/fipstools/test_fips.c",
+    ],
+}
+
+// Rust bindings
+rust_bindgen {
+    name: "libbssl_sys_raw",
+    source_stem: "bindings",
+    crate_name: "bssl_sys_raw",
+    host_supported: true,
+    wrapper_src: "src/rust/wrapper.h",
+    bindgen_flags: [
+        "--no-derive-default",
+        "--enable-function-attribute-detection",
+        "--use-core",
+        "--size_t-is-usize",
+        "--default-macro-constant-type=signed",
+        "--rustified-enum=point_conversion_form_t",
+        // These are not BoringSSL symbols, they are from glibc
+        // and are not relevant to the build besides throwing warnings
+        // about their 'long double' (aka u128) not being FFI safe.
+        // We block those functions so that the build doesn't
+        // spam warnings.
+        //
+        // https://github.com/rust-lang/rust-bindgen/issues/1549 describes the current problem
+        // and other folks' solutions.
+        "--blocklist-function=strtold",
+        "--blocklist-function=qecvt",
+        "--blocklist-function=qecvt_r",
+        "--blocklist-function=qgcvt",
+        "--blocklist-function=qfcvt",
+        "--blocklist-function=qfcvt_r",
+    ],
+    shared_libs: [
+        "libcrypto",
+        "libssl",
+    ],
+}
+
+cc_library_static {
+    name: "libbssl_rust_support",
+    host_supported: true,
+    defaults: ["boringssl_flags"],
+    srcs: ["src/rust/rust_wrapper.c"],
+    shared_libs: [
+        "libcrypto",
+        "libssl",
+    ],
+}
+
+rust_library {
+    name: "libbssl_ffi",
+    host_supported: true,
+    crate_name: "bssl_ffi",
+    visibility: ["//external/rust/crates/openssl"],
+    srcs: ["src/rust/src/lib.rs"],
+    // Since libbssl_sys_raw is not publically visible, we can't
+    // accidentally force a double-link by linking statically, so do so.
+    rlibs: ["libbssl_sys_raw"],
+    static_libs: [
+        "libbssl_rust_support",
     ],
 }
