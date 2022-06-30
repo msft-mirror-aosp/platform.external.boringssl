@@ -2281,6 +2281,13 @@ OPENSSL_EXPORT void SSL_CTX_set_ticket_aead_method(
 OPENSSL_EXPORT SSL_SESSION *SSL_process_tls13_new_session_ticket(
     SSL *ssl, const uint8_t *buf, size_t buf_len);
 
+// SSL_CTX_set_num_tickets configures |ctx| to send |num_tickets| immediately
+// after a successful TLS 1.3 handshake as a server. It returns one. Large
+// values of |num_tickets| will be capped within the library.
+//
+// By default, BoringSSL sends two tickets.
+OPENSSL_EXPORT int SSL_CTX_set_num_tickets(SSL_CTX *ctx, size_t num_tickets);
+
 
 // Elliptic curve Diffie-Hellman.
 //
@@ -4039,10 +4046,16 @@ OPENSSL_EXPORT int SSL_set_handshake_hints(SSL *ssl, const uint8_t *hints,
 // |len| bytes from |buf| contain the handshake message, one-byte
 // ChangeCipherSpec body, and two-byte alert, respectively.
 //
+// In connections that enable ECH, |cb| is additionally called with
+// |content_type| = |SSL3_RT_CLIENT_HELLO_INNER| for each ClientHelloInner that
+// is encrypted or decrypted. The |len| bytes from |buf| contain the
+// ClientHelloInner, including the reconstructed outer extensions and handshake
+// header.
+//
 // For a V2ClientHello, |version| is |SSL2_VERSION|, |content_type| is zero, and
 // the |len| bytes from |buf| contain the V2ClientHello structure.
 OPENSSL_EXPORT void SSL_CTX_set_msg_callback(
-    SSL_CTX *ctx, void (*cb)(int write_p, int version, int content_type,
+    SSL_CTX *ctx, void (*cb)(int is_write, int version, int content_type,
                              const void *buf, size_t len, SSL *ssl, void *arg));
 
 // SSL_CTX_set_msg_callback_arg sets the |arg| parameter of the message
@@ -5598,7 +5611,7 @@ BSSL_NAMESPACE_END
 #define SSL_R_INVALID_ECH_PUBLIC_NAME 317
 #define SSL_R_INVALID_ECH_CONFIG_LIST 318
 #define SSL_R_ECH_REJECTED 319
-#define SSL_R_OUTER_EXTENSION_NOT_FOUND 320
+#define SSL_R_INVALID_OUTER_EXTENSION 320
 #define SSL_R_INCONSISTENT_ECH_NEGOTIATION 321
 #define SSL_R_SSLV3_ALERT_CLOSE_NOTIFY 1000
 #define SSL_R_SSLV3_ALERT_UNEXPECTED_MESSAGE 1010

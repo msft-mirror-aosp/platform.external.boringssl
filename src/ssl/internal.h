@@ -216,7 +216,7 @@ void Delete(T *t) {
 // may be C structs which require a |BORINGSSL_MAKE_DELETER| registration.
 namespace internal {
 template <typename T>
-struct DeleterImpl<T, typename std::enable_if<T::kAllowUniquePtr>::type> {
+struct DeleterImpl<T, std::enable_if_t<T::kAllowUniquePtr>> {
   static void Free(T *t) { Delete(t); }
 };
 }  // namespace internal
@@ -243,14 +243,6 @@ UniquePtr<T> MakeUnique(Args &&... args) {
 // compile-time checking.
 #define PURE_VIRTUAL \
   { abort(); }
-#endif
-
-// CONSTEXPR_ARRAY works around a VS 2015 bug where ranged for loops don't work
-// on constexpr arrays.
-#if defined(_MSC_VER) && !defined(__clang__) && _MSC_VER < 1910
-#define CONSTEXPR_ARRAY const
-#else
-#define CONSTEXPR_ARRAY constexpr
 #endif
 
 // Array<T> is an owning array of elements of |T|.
@@ -1498,17 +1490,19 @@ enum ssl_client_hello_type_t {
 // ClientHelloOuter |client_hello_outer|. If successful, it writes the recovered
 // ClientHelloInner to |out_client_hello_inner|. It returns true on success and
 // false on failure.
+//
+// This function is exported for fuzzing.
 OPENSSL_EXPORT bool ssl_decode_client_hello_inner(
     SSL *ssl, uint8_t *out_alert, Array<uint8_t> *out_client_hello_inner,
     Span<const uint8_t> encoded_client_hello_inner,
     const SSL_CLIENT_HELLO *client_hello_outer);
 
-// ssl_client_hello_decrypt attempts to decrypt the |payload| and writes the
-// result to |*out|. |payload| must point into |client_hello_outer|. It returns
-// true on success and false on error. On error, it sets |*out_is_decrypt_error|
-// to whether the failure was due to a bad ciphertext.
-bool ssl_client_hello_decrypt(EVP_HPKE_CTX *hpke_ctx, Array<uint8_t> *out,
-                              bool *out_is_decrypt_error,
+// ssl_client_hello_decrypt attempts to decrypt and decode the |payload|. It
+// writes the result to |*out|. |payload| must point into |client_hello_outer|.
+// It returns true on success and false on error. On error, it sets
+// |*out_is_decrypt_error| to whether the failure was due to a bad ciphertext.
+bool ssl_client_hello_decrypt(SSL_HANDSHAKE *hs, uint8_t *out_alert,
+                              bool *out_is_decrypt_error, Array<uint8_t> *out,
                               const SSL_CLIENT_HELLO *client_hello_outer,
                               Span<const uint8_t> payload);
 
@@ -2061,6 +2055,11 @@ struct SSL_HANDSHAKE {
   // grease_seed is the entropy for GREASE values.
   uint8_t grease_seed[ssl_grease_last_index + 1] = {0};
 };
+
+// kMaxTickets is the maximum number of tickets to send immediately after the
+// handshake. We use a one-byte ticket nonce, and there is no point in sending
+// so many tickets.
+constexpr size_t kMaxTickets = 16;
 
 UniquePtr<SSL_HANDSHAKE> ssl_handshake_new(SSL *ssl);
 
@@ -3422,6 +3421,11 @@ struct ssl_ctx_st {
   // and is further constrainted by |SSL_OP_NO_*|.
   uint16_t conf_min_version = 0;
 
+  // num_tickets is the number of tickets to send immediately after the TLS 1.3
+  // handshake. TLS 1.3 recommends single-use tickets so, by default, issue two
+  /// in case the client makes several connections before getting a renewal.
+  uint8_t num_tickets = 2;
+
   // quic_method is the method table corresponding to the QUIC hooks.
   const SSL_QUIC_METHOD *quic_method = nullptr;
 
@@ -3511,7 +3515,7 @@ struct ssl_ctx_st {
   bssl::UniquePtr<bssl::CERT> cert;
 
   // callback that allows applications to peek at protocol messages
-  void (*msg_callback)(int write_p, int version, int content_type,
+  void (*msg_callback)(int is_write, int version, int content_type,
                        const void *buf, size_t len, SSL *ssl,
                        void *arg) = nullptr;
   void *msg_callback_arg = nullptr;
