@@ -21,6 +21,7 @@
 #include <openssl/aes.h>
 #include <openssl/bn.h>
 #include <openssl/crypto.h>
+#include <openssl/ctrdrbg.h>
 #include <openssl/des.h>
 #include <openssl/dh.h>
 #include <openssl/ecdsa.h>
@@ -46,6 +47,13 @@ static void hexdump(const void *a, size_t len) {
 
 int main(int argc, char **argv) {
   CRYPTO_library_init();
+
+  const uint32_t module_version = FIPS_version();
+  if (module_version == 0) {
+    printf("No module version set\n");
+    goto err;
+  }
+  printf("Module version: %" PRIu32 "\n", module_version);
 
   static const uint8_t kAESKey[16] = "BoringCrypto Key";
   static const uint8_t kPlaintext[64] =

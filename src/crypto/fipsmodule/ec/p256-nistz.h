@@ -30,7 +30,8 @@ extern "C" {
 #endif
 
 
-#if !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && \
+#if !defined(OPENSSL_NO_ASM) && \
+    (defined(OPENSSL_X86_64) || defined(OPENSSL_AARCH64)) &&   \
     !defined(OPENSSL_SMALL)
 
 // P-256 field operations.
@@ -61,16 +62,6 @@ static inline void ecp_nistz256_from_mont(BN_ULONG res[P256_LIMBS],
                                           const BN_ULONG in[P256_LIMBS]) {
   static const BN_ULONG ONE[P256_LIMBS] = { 1 };
   ecp_nistz256_mul_mont(res, in, ONE);
-}
-
-// ecp_nistz256_to_mont sets |res| to |in|, converted to Montgomery domain
-// by multiplying with RR = 2^512 mod P precomputed for NIST P256 curve.
-static inline void ecp_nistz256_to_mont(BN_ULONG res[P256_LIMBS],
-                                        const BN_ULONG in[P256_LIMBS]) {
-  static const BN_ULONG RR[P256_LIMBS] = {
-      TOBN(0x00000000, 0x00000003), TOBN(0xfffffffb, 0xffffffff),
-      TOBN(0xffffffff, 0xfffffffe), TOBN(0x00000004, 0xfffffffd)};
-  ecp_nistz256_mul_mont(res, in, RR);
 }
 
 
@@ -142,8 +133,9 @@ void ecp_nistz256_point_add(P256_POINT *r, const P256_POINT *a,
 void ecp_nistz256_point_add_affine(P256_POINT *r, const P256_POINT *a,
                                    const P256_POINT_AFFINE *b);
 
-#endif /* !defined(OPENSSL_NO_ASM) && defined(OPENSSL_X86_64) && \
-           !defined(OPENSSL_SMALL) */
+#endif /* !defined(OPENSSL_NO_ASM) && \
+          (defined(OPENSSL_X86_64) || defined(OPENSSL_AARCH64)) &&   \
+          !defined(OPENSSL_SMALL) */
 
 
 #if defined(__cplusplus)
