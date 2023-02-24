@@ -405,11 +405,16 @@ cc_library_static {
         "boringssl_flags",
     ],
     cflags: [
-        "-DOPENSSL_NO_THREADS_CORRUPT_MEMORY_AND_LEAK_SECRETS_IF_THREADED",
         "-DOPENSSL_SMALL",
         "-DOPENSSL_NO_ASM",
+        "-D__TRUSTY__",
     ],
-    visibility: ["//packages/modules/Virtualization:__subpackages__"],
+    visibility: [
+        "//external/avb",
+        "//external/open-dice",
+        "//packages/modules/Virtualization:__subpackages__",
+        "//system/security/diced/open_dice",
+    ],
     apex_available: ["com.android.virt"],
 }
 
@@ -599,14 +604,13 @@ cc_library_static {
 
     shared_libs: [
         "libcrypto",
-        "libssl",
     ],
 }
 
 // Tests
 cc_test {
     name: "boringssl_crypto_test",
-    test_config: "NativeTests.xml",
+    test_config: "CryptoNativeTests.xml",
     host_supported: false,
     per_testcase_directory: true,
     compile_multilib: "both",
@@ -635,7 +639,7 @@ cc_test {
 
 cc_test {
     name: "boringssl_ssl_test",
-    test_config: "NativeTests.xml",
+    test_config: "SslNativeTests.xml",
     host_supported: false,
     per_testcase_directory: true,
     compile_multilib: "both",
@@ -775,10 +779,10 @@ rust_library {
     // Use the modified source with placeholder replaced.
     srcs: [":libbssl_sys_src"],
     vendor_available: true,
-    // Since libbssl_sys_raw is not publically visible, we can't
-    // accidentally force a double-link by linking statically, so do so.
+    // Since libbssl_sys_raw is not publicly visible, we can't accidentally
+    // force a double-link by linking statically, so do so.
     rlibs: ["libbssl_sys_raw"],
-    static_libs: [
+    whole_static_libs: [
         "libbssl_rust_support",
     ],
     apex_available: [
