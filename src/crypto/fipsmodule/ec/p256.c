@@ -22,7 +22,6 @@
 #include <openssl/ec.h>
 #include <openssl/err.h>
 #include <openssl/mem.h>
-#include <openssl/type_check.h>
 
 #include <assert.h>
 #include <string.h>
@@ -30,10 +29,6 @@
 #include "../../internal.h"
 #include "../delocate.h"
 #include "./internal.h"
-
-#if defined(OPENSSL_NO_ASM)
-#define FIAT_P256_NO_ASM
-#endif
 
 #if defined(BORINGSSL_HAS_UINT128)
 #define BORINGSSL_NISTP256_64BIT 1
@@ -744,6 +739,10 @@ DEFINE_METHOD_FUNCTION(EC_METHOD, EC_GFp_nistp256_method) {
   out->felem_sqr = ec_GFp_mont_felem_sqr;
   out->felem_to_bytes = ec_GFp_mont_felem_to_bytes;
   out->felem_from_bytes = ec_GFp_mont_felem_from_bytes;
+  out->felem_reduce = ec_GFp_mont_felem_reduce;
+  // TODO(davidben): This should use the specialized field arithmetic
+  // implementation, rather than the generic one.
+  out->felem_exp = ec_GFp_mont_felem_exp;
   out->scalar_inv0_montgomery = ec_simple_scalar_inv0_montgomery;
   out->scalar_to_montgomery_inv_vartime =
       ec_simple_scalar_to_montgomery_inv_vartime;

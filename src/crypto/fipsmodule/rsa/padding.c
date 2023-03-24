@@ -358,7 +358,6 @@ int RSA_padding_add_PKCS1_OAEP_mgf1(uint8_t *to, size_t to_len,
 
   dbmask = OPENSSL_malloc(emlen - mdlen);
   if (dbmask == NULL) {
-    OPENSSL_PUT_ERROR(RSA, ERR_R_MALLOC_FAILURE);
     goto out;
   }
 
@@ -413,7 +412,6 @@ int RSA_padding_check_PKCS1_OAEP_mgf1(uint8_t *out, size_t *out_len,
   FIPS_service_indicator_lock_state();
   db = OPENSSL_malloc(dblen);
   if (db == NULL) {
-    OPENSSL_PUT_ERROR(RSA, ERR_R_MALLOC_FAILURE);
     goto err;
   }
 
@@ -457,9 +455,15 @@ int RSA_padding_check_PKCS1_OAEP_mgf1(uint8_t *out, size_t *out_len,
 
   bad |= looking_for_one_byte;
 
-  if (bad) {
+  // Whether the overall padding was valid or not in OAEP is public.
+  if (constant_time_declassify_w(bad)) {
     goto decoding_err;
   }
+
+  // Once the padding is known to be valid, the output length is also public.
+  static_assert(sizeof(size_t) <= sizeof(crypto_word_t),
+                "size_t does not fit in crypto_word_t");
+  one_index = constant_time_declassify_w(one_index);
 
   one_index++;
   size_t mlen = dblen - one_index;
@@ -475,8 +479,8 @@ int RSA_padding_check_PKCS1_OAEP_mgf1(uint8_t *out, size_t *out_len,
   return 1;
 
 decoding_err:
-  // to avoid chosen ciphertext attacks, the error message should not reveal
-  // which kind of decoding error happened
+  // To avoid chosen ciphertext attacks, the error message should not reveal
+  // which kind of decoding error happened.
   OPENSSL_PUT_ERROR(RSA, RSA_R_OAEP_DECODING_ERROR);
  err:
   OPENSSL_free(db);
@@ -489,29 +493,23 @@ static const uint8_t kPSSZeroes[] = {0, 0, 0, 0, 0, 0, 0, 0};
 int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
                               const EVP_MD *Hash, const EVP_MD *mgf1Hash,
                               const uint8_t *EM, int sLen) {
-  int i;
-  int ret = 0;
-  int maskedDBLen, MSBits, emLen;
-  size_t hLen;
-  const uint8_t *H;
-  uint8_t *DB = NULL;
-  EVP_MD_CTX ctx;
-  uint8_t H_[EVP_MAX_MD_SIZE];
-  EVP_MD_CTX_init(&ctx);
-
   if (mgf1Hash == NULL) {
     mgf1Hash = Hash;
   }
 
-  hLen = EVP_MD_size(Hash);
+  int ret = 0;
+  uint8_t *DB = NULL;
+  EVP_MD_CTX ctx;
+  EVP_MD_CTX_init(&ctx);
   FIPS_service_indicator_lock_state();
 
   // Negative sLen has special meanings:
   //	-1	sLen == hLen
   //	-2	salt length is autorecovered from signature
   //	-N	reserved
+  size_t hLen = EVP_MD_size(Hash);
   if (sLen == -1) {
-    sLen = hLen;
+    sLen = (int)hLen;
   } else if (sLen == -2) {
     sLen = -2;
   } else if (sLen < -2) {
@@ -519,8 +517,8 @@ int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
     goto err;
   }
 
-  MSBits = (BN_num_bits(rsa->n) - 1) & 0x7;
-  emLen = RSA_size(rsa);
+  unsigned MSBits = (BN_num_bits(rsa->n) - 1) & 0x7;
+  size_t emLen = RSA_size(rsa);
   if (EM[0] & (0xFF << MSBits)) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_FIRST_OCTET_INVALID);
     goto err;
@@ -529,8 +527,9 @@ int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
     EM++;
     emLen--;
   }
-  if (emLen < (int)hLen + 2 || emLen < ((int)hLen + sLen + 2)) {
-    // sLen can be small negative
+  // |sLen| may be -2 for the non-standard salt length recovery mode.
+  if (emLen < hLen + 2 ||
+      (sLen >= 0 && emLen < hLen + (size_t)sLen + 2)) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_DATA_TOO_LARGE);
     goto err;
   }
@@ -538,52 +537,58 @@ int RSA_verify_PKCS1_PSS_mgf1(const RSA *rsa, const uint8_t *mHash,
     OPENSSL_PUT_ERROR(RSA, RSA_R_LAST_OCTET_INVALID);
     goto err;
   }
-  maskedDBLen = emLen - hLen - 1;
-  H = EM + maskedDBLen;
+  size_t maskedDBLen = emLen - hLen - 1;
+  const uint8_t *H = EM + maskedDBLen;
   DB = OPENSSL_malloc(maskedDBLen);
   if (!DB) {
-    OPENSSL_PUT_ERROR(RSA, ERR_R_MALLOC_FAILURE);
     goto err;
   }
   if (!PKCS1_MGF1(DB, maskedDBLen, H, hLen, mgf1Hash)) {
     goto err;
   }
-  for (i = 0; i < maskedDBLen; i++) {
+  for (size_t i = 0; i < maskedDBLen; i++) {
     DB[i] ^= EM[i];
   }
   if (MSBits) {
     DB[0] &= 0xFF >> (8 - MSBits);
   }
-  for (i = 0; DB[i] == 0 && i < (maskedDBLen - 1); i++) {
+  // This step differs slightly from EMSA-PSS-VERIFY (RFC 8017) step 10 because
+  // it accepts a non-standard salt recovery flow. DB should be some number of
+  // zeros, a one, then the salt.
+  size_t salt_start;
+  for (salt_start = 0; DB[salt_start] == 0 && salt_start < maskedDBLen - 1;
+       salt_start++) {
     ;
   }
-  if (DB[i++] != 0x1) {
+  if (DB[salt_start] != 0x1) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_SLEN_RECOVERY_FAILED);
     goto err;
   }
-  if (sLen >= 0 && (maskedDBLen - i) != sLen) {
+  salt_start++;
+  // If a salt length was specified, check it matches.
+  if (sLen >= 0 && maskedDBLen - salt_start != (size_t)sLen) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_SLEN_CHECK_FAILED);
     goto err;
   }
+  uint8_t H_[EVP_MAX_MD_SIZE];
   if (!EVP_DigestInit_ex(&ctx, Hash, NULL) ||
       !EVP_DigestUpdate(&ctx, kPSSZeroes, sizeof(kPSSZeroes)) ||
       !EVP_DigestUpdate(&ctx, mHash, hLen) ||
-      !EVP_DigestUpdate(&ctx, DB + i, maskedDBLen - i) ||
+      !EVP_DigestUpdate(&ctx, DB + salt_start, maskedDBLen - salt_start) ||
       !EVP_DigestFinal_ex(&ctx, H_, NULL)) {
     goto err;
   }
-  if (OPENSSL_memcmp(H_, H, hLen)) {
+  if (OPENSSL_memcmp(H_, H, hLen) != 0) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_BAD_SIGNATURE);
-    ret = 0;
-  } else {
-    ret = 1;
+    goto err;
   }
+
+  ret = 1;
 
 err:
   OPENSSL_free(DB);
   EVP_MD_CTX_cleanup(&ctx);
   FIPS_service_indicator_unlock_state();
-
   return ret;
 }
 
@@ -645,7 +650,6 @@ int RSA_padding_add_PKCS1_PSS_mgf1(const RSA *rsa, unsigned char *EM,
   if (sLen > 0) {
     salt = OPENSSL_malloc(sLen);
     if (!salt) {
-      OPENSSL_PUT_ERROR(RSA, ERR_R_MALLOC_FAILURE);
       goto err;
     }
     if (!RAND_bytes(salt, sLen)) {
