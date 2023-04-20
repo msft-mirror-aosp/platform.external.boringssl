@@ -264,9 +264,9 @@ static constexpr SSL_CIPHER kCiphers[] = {
 
     // Cipher 1301
     {
-      TLS1_TXT_AES_128_GCM_SHA256,
+      TLS1_3_RFC_AES_128_GCM_SHA256,
       "TLS_AES_128_GCM_SHA256",
-      TLS1_CK_AES_128_GCM_SHA256,
+      TLS1_3_CK_AES_128_GCM_SHA256,
       SSL_kGENERIC,
       SSL_aGENERIC,
       SSL_AES128GCM,
@@ -276,9 +276,9 @@ static constexpr SSL_CIPHER kCiphers[] = {
 
     // Cipher 1302
     {
-      TLS1_TXT_AES_256_GCM_SHA384,
+      TLS1_3_RFC_AES_256_GCM_SHA384,
       "TLS_AES_256_GCM_SHA384",
-      TLS1_CK_AES_256_GCM_SHA384,
+      TLS1_3_CK_AES_256_GCM_SHA384,
       SSL_kGENERIC,
       SSL_aGENERIC,
       SSL_AES256GCM,
@@ -288,9 +288,9 @@ static constexpr SSL_CIPHER kCiphers[] = {
 
     // Cipher 1303
     {
-      TLS1_TXT_CHACHA20_POLY1305_SHA256,
+      TLS1_3_RFC_CHACHA20_POLY1305_SHA256,
       "TLS_CHACHA20_POLY1305_SHA256",
-      TLS1_CK_CHACHA20_POLY1305_SHA256,
+      TLS1_3_CK_CHACHA20_POLY1305_SHA256,
       SSL_kGENERIC,
       SSL_aGENERIC,
       SSL_CHACHA20POLY1305,
@@ -1002,8 +1002,7 @@ static bool ssl_cipher_process_rulestr(const char *rule_str,
         rule = CIPHER_ADD;
         l++;
         continue;
-      } else if (!(ch >= 'a' && ch <= 'z') && !(ch >= 'A' && ch <= 'Z') &&
-                 !(ch >= '0' && ch <= '9')) {
+      } else if (!OPENSSL_isalnum(ch)) {
         OPENSSL_PUT_ERROR(SSL, SSL_R_UNEXPECTED_OPERATOR_IN_GROUP);
         return false;
       } else {
@@ -1056,8 +1055,7 @@ static bool ssl_cipher_process_rulestr(const char *rule_str,
       ch = *l;
       buf = l;
       buf_len = 0;
-      while ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-             (ch >= 'a' && ch <= 'z') || ch == '-' || ch == '.' || ch == '_') {
+      while (OPENSSL_isalnum(ch) || ch == '-' || ch == '.' || ch == '_') {
         ch = *(++l);
         buf_len++;
       }
