@@ -10,7 +10,7 @@ Unless otherwise noted, build tools must at most five years old, matching
 [Abseil guidelines](https://abseil.io/about/compatibility). If in doubt, use the
 most recent stable version of each tool.
 
-  * [CMake](https://cmake.org/download/) 3.5 or later is required.
+  * [CMake](https://cmake.org/download/) 3.10 or later is required.
 
   * A recent version of Perl is required. On Windows,
     [Active State Perl](http://www.activestate.com/activeperl/) has been
@@ -96,8 +96,8 @@ Unpack the Android NDK somewhere and export `ANDROID_NDK` to point to the
 directory. Then make a build directory as above and run CMake like this:
 
     cmake -DANDROID_ABI=armeabi-v7a \
+          -DANDROID_PLATFORM=android-19 \
           -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK}/build/cmake/android.toolchain.cmake \
-          -DANDROID_NATIVE_API_LEVEL=16 \
           -GNinja ..
 
 Once you've run that, Ninja should produce Android-compatible binaries.  You
