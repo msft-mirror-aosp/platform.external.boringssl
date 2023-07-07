@@ -59,11 +59,11 @@
 #include <openssl/err.h>
 #include <openssl/mem.h>
 #include <openssl/sha.h>
-#include <openssl/type_check.h>
 
 #include "../../internal.h"
 #include "../bn/internal.h"
 #include "../ec/internal.h"
+#include "../service_indicator/internal.h"
 #include "internal.h"
 
 
@@ -321,8 +321,8 @@ ECDSA_SIG *ECDSA_do_sign(const uint8_t *digest, size_t digest_len,
 
   // Pass a SHA512 hash of the private key and digest as additional data
   // into the RBG. This is a hardening measure against entropy failure.
-  OPENSSL_STATIC_ASSERT(SHA512_DIGEST_LENGTH >= 32,
-                        "additional_data is too large for SHA-512");
+  static_assert(SHA512_DIGEST_LENGTH >= 32,
+                "additional_data is too large for SHA-512");
 
   FIPS_service_indicator_lock_state();
 
@@ -333,7 +333,13 @@ ECDSA_SIG *ECDSA_do_sign(const uint8_t *digest, size_t digest_len,
   SHA512_Update(&sha, digest, digest_len);
   SHA512_Final(additional_data, &sha);
 
+  // Cap iterations so callers who supply invalid values as custom groups do not
+  // infinite loop. This does not impact valid parameters (e.g. those covered by
+  // FIPS) because the probability of requiring even one retry is negligible,
+  // let alone 32.
+  static const int kMaxIterations = 32;
   ECDSA_SIG *ret = NULL;
+  int iters = 0;
   for (;;) {
     EC_SCALAR k;
     if (!ec_random_nonzero_scalar(group, &k, additional_data)) {
@@ -344,6 +350,12 @@ ECDSA_SIG *ECDSA_do_sign(const uint8_t *digest, size_t digest_len,
     int retry;
     ret = ecdsa_sign_impl(group, &retry, priv_key, &k, digest, digest_len);
     if (ret != NULL || !retry) {
+      goto out;
+    }
+
+    iters++;
+    if (iters > kMaxIterations) {
+      OPENSSL_PUT_ERROR(ECDSA, ECDSA_R_TOO_MANY_ITERATIONS);
       goto out;
     }
   }
