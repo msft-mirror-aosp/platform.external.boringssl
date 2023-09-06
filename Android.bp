@@ -47,11 +47,6 @@ cc_defaults {
     // directly.
     name: "boringssl_flags_common",
 
-    // TODO(b/293260907): These are probably incorrect for the "baremetal"
-    // builds and should likely be moved to boringssl_flags.
-    vendor_available: true,
-    product_available: true,
-
     cflags: [
         "-fvisibility=hidden",
         "-DBORINGSSL_SHARED_LIBRARY",
@@ -67,22 +62,12 @@ cc_defaults {
 
     // Build BoringSSL and its tests against the same STL.
     stl: "libc++_static",
-
-    // The libcrypto_sources target does not include assembly for Windows and
-    // macOS. When updating to https://boringssl-review.googlesource.com/62005,
-    // remove this.
-    target: {
-        windows: {
-            cflags: ["-DOPENSSL_NO_ASM"],
-        },
-        darwin: {
-            cflags: ["-DOPENSSL_NO_ASM"],
-        },
-    },
 }
 
 cc_defaults {
     name: "boringssl_flags",
+    vendor_available: true,
+    product_available: true,
     cflags: ["-DBORINGSSL_ANDROID_SYSTEM"],
     defaults: ["boringssl_flags_common"],
     sdk_version: "9",
@@ -92,9 +77,6 @@ cc_defaults {
     name: "boringssl_flags_baremetal",
     cflags: [
         "-DBORINGSSL_NO_STATIC_INITIALIZER",
-        // TODO(b/291106677): Remove this once BoringSSL can query the system
-        // registers for Android baremetal.
-        "-DOPENSSL_STATIC_ARMCAP",
         "-DANDROID_BAREMETAL",
     ],
     defaults: ["boringssl_flags_common"],
@@ -137,12 +119,10 @@ cc_defaults {
 }
 
 // Boring Crypto Module object file.
-// Any changes here must also be reflected in bcm_object_for_testing below.
-cc_object {
-    name: "bcm_object",
+// Common settings between bcm_object and bcm_object_for_testing.
+cc_defaults {
+    name: "bcm_object_defaults",
     device_supported: true,
-    recovery_available: true,
-    native_bridge_supported: true,
     defaults: [
         "libcrypto_bcm_sources",
         "libcrypto_defaults",
@@ -181,6 +161,16 @@ cc_object {
             ],
         },
     },
+    min_sdk_version: "29",
+}
+
+cc_object {
+    name: "bcm_object",
+    recovery_available: true,
+    native_bridge_supported: true,
+    defaults: [
+        "bcm_object_defaults",
+    ],
     apex_available: [
         "//apex_available:platform",
         "com.android.adbd",
@@ -193,57 +183,23 @@ cc_object {
         "com.android.resolv",
         "com.android.virt",
     ],
-    min_sdk_version: "29",
 }
 
 // Version of bcm_object built with BORINGSSL_FIPS_BREAK_TESTS defined.
 // Only for use with the FIPS break-tests.sh script.
-// Must be kept in sync with bcm_object.
 cc_object {
     name: "bcm_object_for_testing",
     visibility: [
         "//external/boringssl",
     ],
-    device_supported: true,
     defaults: [
-        "libcrypto_bcm_sources",
-        "libcrypto_defaults",
-        "boringssl_defaults",
-        "boringssl_flags",
+        "bcm_object_defaults",
     ],
-    sanitize: {
-        address: false,
-        hwaddress: false,
-        fuzzer: false,
-        memtag_globals: false,
-    },
     target: {
         android: {
-            cflags: [
-                "-DBORINGSSL_FIPS",
-                "-DBORINGSSL_FIPS_BREAK_TESTS",
-                "-fPIC",
-                // -fno[data|text]-sections required to ensure a
-                // single text and data section for FIPS integrity check
-                "-fno-data-sections",
-                "-fno-function-sections",
-            ],
-            linker_script: "src/crypto/fipsmodule/fips_shared.lds",
-        },
-        // Temporary hack to let BoringSSL build with a new compiler.
-        // This doesn't enable HWASAN unconditionally, it just causes
-        // BoringSSL's asm code to unconditionally use a HWASAN-compatible
-        // global variable reference so that the non-HWASANified (because of
-        // sanitize: { hwaddress: false } above) code in the BCM can
-        // successfully link against the HWASANified code in the rest of
-        // BoringSSL in HWASAN builds.
-        android_arm64: {
-            asflags: [
-                "-fsanitize=hwaddress",
-            ],
+            cflags: ["-DBORINGSSL_FIPS_BREAK_TESTS"],
         },
     },
-    min_sdk_version: "29",
 }
 
 bootstrap_go_package {
@@ -401,7 +357,6 @@ cc_library_static {
         "//hardware/interfaces/keymaster/4.0/vts/functional",
         "//hardware/interfaces/keymaster/4.1/vts/functional",
         "//packages/modules/adb",
-        "//packages/modules/Bluetooth:__subpackages__",
         "//packages/modules/DnsResolver/tests:__subpackages__",
         "//packages/modules/NeuralNetworks:__subpackages__",
         "//system/core/init",
@@ -438,10 +393,8 @@ cc_library_static {
     visibility: [
         "//external/avb",
         "//external/open-dice",
-        "//packages/modules/Virtualization:__subpackages__",
         "//system/security/diced/open_dice",
     ],
-    apex_available: ["com.android.virt"],
 }
 
 // Common defaults for lib*_fuzz_unsafe. These are unsafe and deterministic
