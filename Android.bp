@@ -399,7 +399,7 @@ cc_library_static {
         "boringssl_flags_baremetal",
     ],
     visibility: [
-        "//external/avb",
+        "//external/avb:__subpackages__",
         "//external/open-dice",
         "//packages/modules/Virtualization:__subpackages__",
         "//system/security/diced/open_dice",
@@ -689,6 +689,15 @@ cc_test {
 cc_binary {
     name: "test_fips",
     host_supported: false,
+    compile_multilib: "both",
+    multilib: {
+        lib32: {
+            suffix: "32",
+        },
+        lib64: {
+            suffix: "",
+        },
+    },
     defaults: [
         "boringssl_flags",
     ],
