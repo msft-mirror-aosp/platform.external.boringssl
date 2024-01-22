@@ -296,6 +296,7 @@ cc_library {
         "com.android.virt",
     ],
     min_sdk_version: "29",
+    afdo: true,
 }
 
 // Version of libcrypto build with BORINGSSL_FIPS_BREAK_TESTS defined
@@ -364,6 +365,7 @@ cc_library_static {
         "//hardware/interfaces/keymaster/4.0/vts/functional",
         "//hardware/interfaces/keymaster/4.1/vts/functional",
         "//packages/modules/adb",
+        "//packages/modules/AdServices:__subpackages__",
         "//packages/modules/DnsResolver/tests:__subpackages__",
         "//packages/modules/NeuralNetworks:__subpackages__",
         "//system/core/init",
@@ -378,6 +380,8 @@ cc_library_static {
     min_sdk_version: "29",
     apex_available: [
         "//apex_available:platform",
+        "com.android.adservices",
+        "com.android.extservices",
         "com.android.neuralnetworks",
     ],
     defaults: [
@@ -825,9 +829,9 @@ genrule {
 }
 
 rust_defaults {
-    name: "libbssl_ffi_defaults",
+    name: "libbssl_sys_defaults",
     host_supported: true,
-    crate_name: "bssl_ffi",
+    crate_name: "bssl_sys",
     visibility: [
         "//external/rust/crates/openssl",
         "//system/keymint/boringssl",
@@ -843,8 +847,8 @@ rust_defaults {
 }
 
 rust_library {
-    name: "libbssl_ffi",
-    defaults: ["libbssl_ffi_defaults"],
+    name: "libbssl_sys",
+    defaults: ["libbssl_sys_defaults"],
     whole_static_libs: [
         "libbssl_rust_support",
     ],
@@ -855,8 +859,8 @@ rust_library {
 }
 
 rust_library_host_rlib {
-    name: "libbssl_ffi_static",
-    defaults: ["libbssl_ffi_defaults"],
+    name: "libbssl_sys_static",
+    defaults: ["libbssl_sys_defaults"],
     whole_static_libs: [
         "libbssl_rust_support_static",
     ],
@@ -870,8 +874,8 @@ genrule {
 }
 
 rust_library_rlib {
-    name: "libbssl_ffi_nostd",
-    crate_name: "bssl_ffi",
+    name: "libbssl_sys_nostd",
+    crate_name: "bssl_sys",
     visibility: [
         "//packages/modules/Virtualization:__subpackages__",
     ],
@@ -886,4 +890,36 @@ rust_library_rlib {
     whole_static_libs: [
         "libbssl_rust_support_baremetal",
     ],
+}
+
+// High-level Rust crate `bssl-crypto`
+
+rust_defaults {
+    name: "libbssl_crypto_defaults",
+    crate_name: "bssl_crypto",
+    srcs: ["src/rust/bssl-crypto/src/lib.rs"],
+    rustlibs: ["libbssl_sys"],
+}
+
+rust_library {
+    name: "libbssl_crypto",
+    defaults: ["libbssl_crypto_defaults"],
+    host_supported: true,
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.virt",
+    ],
+    visibility: [
+        "//external/rust/beto-rust/nearby",
+    ],
+    vendor_available: true,
+    product_available: true,
+}
+
+rust_test {
+    name: "libbssl_crypto_test",
+    defaults: ["libbssl_crypto_defaults"],
+    crate_name: "bssl_crypto_test",
+    test_suites: ["general-tests"],
+    auto_gen_config: true,
 }
