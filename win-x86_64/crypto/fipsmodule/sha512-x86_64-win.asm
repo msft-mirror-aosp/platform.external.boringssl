@@ -14,14 +14,15 @@ default	rel
 section	.text code align=64
 
 
-global	sha512_block_data_order_nohw
+EXTERN	OPENSSL_ia32cap_P
+global	sha512_block_data_order
 
 ALIGN	16
-sha512_block_data_order_nohw:
+sha512_block_data_order:
 	mov	QWORD[8+rsp],rdi	;WIN64 prologue
 	mov	QWORD[16+rsp],rsi
 	mov	rax,rsp
-$L$SEH_begin_sha512_block_data_order_nohw:
+$L$SEH_begin_sha512_block_data_order:
 	mov	rdi,rcx
 	mov	rsi,rdx
 	mov	rdx,r8
@@ -29,6 +30,15 @@ $L$SEH_begin_sha512_block_data_order_nohw:
 
 
 _CET_ENDBR
+	lea	r11,[OPENSSL_ia32cap_P]
+	mov	r9d,DWORD[r11]
+	mov	r10d,DWORD[4+r11]
+	mov	r11d,DWORD[8+r11]
+	and	r9d,1073741824
+	and	r10d,268435968
+	or	r10d,r9d
+	cmp	r10d,1342177792
+	je	NEAR $L$avx_shortcut
 	mov	rax,rsp
 
 	push	rbx
@@ -1736,7 +1746,7 @@ $L$epilogue:
 	mov	rsi,QWORD[16+rsp]
 	ret
 
-$L$SEH_end_sha512_block_data_order_nohw:
+$L$SEH_end_sha512_block_data_order:
 section	.rdata rdata align=8
 ALIGN	64
 
@@ -1831,7 +1841,6 @@ K512:
 	DB	111,114,103,62,0
 section	.text
 
-global	sha512_block_data_order_avx
 
 ALIGN	64
 sha512_block_data_order_avx:
@@ -1845,7 +1854,7 @@ $L$SEH_begin_sha512_block_data_order_avx:
 
 
 
-_CET_ENDBR
+$L$avx_shortcut:
 	mov	rax,rsp
 
 	push	rbx
@@ -3118,15 +3127,15 @@ $L$in_prologue:
 
 section	.pdata rdata align=4
 ALIGN	4
-	DD	$L$SEH_begin_sha512_block_data_order_nohw wrt ..imagebase
-	DD	$L$SEH_end_sha512_block_data_order_nohw wrt ..imagebase
-	DD	$L$SEH_info_sha512_block_data_order_nohw wrt ..imagebase
+	DD	$L$SEH_begin_sha512_block_data_order wrt ..imagebase
+	DD	$L$SEH_end_sha512_block_data_order wrt ..imagebase
+	DD	$L$SEH_info_sha512_block_data_order wrt ..imagebase
 	DD	$L$SEH_begin_sha512_block_data_order_avx wrt ..imagebase
 	DD	$L$SEH_end_sha512_block_data_order_avx wrt ..imagebase
 	DD	$L$SEH_info_sha512_block_data_order_avx wrt ..imagebase
 section	.xdata rdata align=8
 ALIGN	8
-$L$SEH_info_sha512_block_data_order_nohw:
+$L$SEH_info_sha512_block_data_order:
 	DB	9,0,0,0
 	DD	se_handler wrt ..imagebase
 	DD	$L$prologue wrt ..imagebase,$L$epilogue wrt ..imagebase

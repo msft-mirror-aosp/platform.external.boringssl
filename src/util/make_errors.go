@@ -59,11 +59,6 @@ func getLibraryInfo(lib string) libraryInfo {
 		info.sourceDirs = append(info.sourceDirs, filepath.Join("crypto", "hpke"))
 	}
 
-	if lib == "x509v3" {
-		info.headerName = "x509v3_errors.h"
-		info.sourceDirs = append(info.sourceDirs, filepath.Join("crypto", "x509"))
-	}
-
 	return info
 }
 
@@ -326,7 +321,7 @@ func assignNewValues(assignments map[string]int, reserved int) {
 	}
 }
 
-func handleDeclareMacro(line, prefix, join, macroName string, m map[string]int) {
+func handleDeclareMacro(line, join, macroName string, m map[string]int) {
 	if i := strings.Index(line, macroName); i >= 0 {
 		contents := line[i+len(macroName):]
 		if i := strings.Index(contents, ")"); i >= 0 {
@@ -338,11 +333,9 @@ func handleDeclareMacro(line, prefix, join, macroName string, m map[string]int) 
 			if len(args) != 2 {
 				panic("Bad macro line: " + line)
 			}
-			if args[0] == prefix {
-				token := args[0] + join + args[1]
-				if _, ok := m[token]; !ok {
-					m[token] = -1
-				}
+			token := args[0] + join + args[1]
+			if _, ok := m[token]; !ok {
+				m[token] = -1
 			}
 		}
 	}
@@ -361,7 +354,7 @@ func addReasons(reasons map[string]int, filename, prefix string) error {
 	for scanner.Scan() {
 		line := scanner.Text()
 
-		handleDeclareMacro(line, prefix, "_R_", "OPENSSL_DECLARE_ERROR_REASON(", reasons)
+		handleDeclareMacro(line, "_R_", "OPENSSL_DECLARE_ERROR_REASON(", reasons)
 
 		for len(line) > 0 {
 			i := strings.Index(line, prefix+"_")

@@ -50,13 +50,26 @@
 
 .text
 
-.globl	sha256_block_data_order_nohw
 
-.def sha256_block_data_order_nohw
+
+.globl	sha256_block_data_order
+
+.def sha256_block_data_order
    .type 32
 .endef
 .align	6
-sha256_block_data_order_nohw:
+sha256_block_data_order:
+	AARCH64_VALID_CALL_TARGET
+#ifndef	__KERNEL__
+#if defined(OPENSSL_HWASAN) && __clang_major__ >= 10
+	adrp	x16,:pg_hi21_nc:OPENSSL_armcap_P
+#else
+	adrp	x16,OPENSSL_armcap_P
+#endif
+	ldr	w16,[x16,:lo12:OPENSSL_armcap_P]
+	tst	w16,#ARMV8_SHA256
+	b.ne	Lv8_entry
+#endif
 	AARCH64_SIGN_LINK_REGISTER
 	stp	x29,x30,[sp,#-128]!
 	add	x29,sp,#0
@@ -1049,15 +1062,13 @@ LK256:
 .align	2
 .text
 #ifndef	__KERNEL__
-.globl	sha256_block_data_order_hw
-
-.def sha256_block_data_order_hw
+.def sha256_block_armv8
    .type 32
 .endef
 .align	6
-sha256_block_data_order_hw:
+sha256_block_armv8:
+Lv8_entry:
 	// Armv8.3-A PAuth: even though x30 is pushed to stack it is not popped later.
-	AARCH64_VALID_CALL_TARGET
 	stp	x29,x30,[sp,#-16]!
 	add	x29,sp,#0
 

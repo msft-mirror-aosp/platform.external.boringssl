@@ -76,7 +76,7 @@ if ($flavour && $flavour ne "void") {
     *STDOUT=*OUT;
 }
 
-$func="sha${BITS}_block_data_order_nohw";
+$func="sha${BITS}_block_data_order";
 
 ($ctx,$inp,$num,$Ktbl)=map("x$_",(0..2,30));
 
@@ -180,10 +180,31 @@ $code.=<<___;
 
 .text
 
+.extern	OPENSSL_armcap_P
+.hidden	OPENSSL_armcap_P
 .globl	$func
 .type	$func,%function
 .align	6
 $func:
+	AARCH64_VALID_CALL_TARGET
+#ifndef	__KERNEL__
+#if defined(OPENSSL_HWASAN) && __clang_major__ >= 10
+	adrp	x16,:pg_hi21_nc:OPENSSL_armcap_P
+#else
+	adrp	x16,:pg_hi21:OPENSSL_armcap_P
+#endif
+	ldr	w16,[x16,:lo12:OPENSSL_armcap_P]
+___
+$code.=<<___	if ($SZ==4);
+	tst	w16,#ARMV8_SHA256
+	b.ne	.Lv8_entry
+___
+$code.=<<___	if ($SZ==8);
+	tst	w16,#ARMV8_SHA512
+	b.ne	.Lv8_entry
+___
+$code.=<<___;
+#endif
 	AARCH64_SIGN_LINK_REGISTER
 	stp	x29,x30,[sp,#-128]!
 	add	x29,sp,#0
@@ -335,12 +356,11 @@ my ($ABCD_SAVE,$EFGH_SAVE)=("v18.16b","v19.16b");
 $code.=<<___;
 .text
 #ifndef	__KERNEL__
-.globl	sha256_block_data_order_hw
-.type	sha256_block_data_order_hw,%function
+.type	sha256_block_armv8,%function
 .align	6
-sha256_block_data_order_hw:
+sha256_block_armv8:
+.Lv8_entry:
 	// Armv8.3-A PAuth: even though x30 is pushed to stack it is not popped later.
-	AARCH64_VALID_CALL_TARGET
 	stp		x29,x30,[sp,#-16]!
 	add		x29,sp,#0
 
@@ -405,7 +425,7 @@ $code.=<<___;
 
 	ldr		x29,[sp],#16
 	ret
-.size	sha256_block_data_order_hw,.-sha256_block_data_order_hw
+.size	sha256_block_armv8,.-sha256_block_armv8
 #endif
 ___
 }
@@ -422,12 +442,10 @@ my ($AB,$CD,$EF,$GH)=map("v$_.16b",(26..29));
 $code.=<<___;
 .text
 #ifndef	__KERNEL__
-.globl	sha512_block_data_order_hw
-.type	sha512_block_data_order_hw,%function
+.type	sha512_block_armv8,%function
 .align	6
-sha512_block_data_order_hw:
-	// Armv8.3-A PAuth: even though x30 is pushed to stack it is not popped later.
-	AARCH64_VALID_CALL_TARGET
+sha512_block_armv8:
+.Lv8_entry:
 	stp		x29,x30,[sp,#-16]!
 	add		x29,sp,#0
 
@@ -511,7 +529,7 @@ $code.=<<___;
 
 	ldr		x29,[sp],#16
 	ret
-.size	sha512_block_data_order_hw,.-sha512_block_data_order_hw
+.size	sha512_block_armv8,.-sha512_block_armv8
 #endif
 ___
 }

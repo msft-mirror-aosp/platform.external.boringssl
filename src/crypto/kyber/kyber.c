@@ -28,22 +28,6 @@
 // See
 // https://pq-crystals.org/kyber/data/kyber-specification-round3-20210804.pdf
 
-static void prf(uint8_t *out, size_t out_len, const uint8_t in[33]) {
-  BORINGSSL_keccak(out, out_len, in, 33, boringssl_shake256);
-}
-
-static void hash_h(uint8_t out[32], const uint8_t *in, size_t len) {
-  BORINGSSL_keccak(out, 32, in, len, boringssl_sha3_256);
-}
-
-static void hash_g(uint8_t out[64], const uint8_t *in, size_t len) {
-  BORINGSSL_keccak(out, 64, in, len, boringssl_sha3_512);
-}
-
-static void kdf(uint8_t *out, size_t out_len, const uint8_t *in, size_t len) {
-  BORINGSSL_keccak(out, out_len, in, len, boringssl_shake256);
-}
-
 #define DEGREE 256
 #define RANK 3
 
@@ -331,7 +315,7 @@ static void scalar_centered_binomial_distribution_eta_2_with_prf(
     scalar *out, const uint8_t input[33]) {
   uint8_t entropy[128];
   static_assert(sizeof(entropy) == 2 * /*kEta=*/2 * DEGREE / 8, "");
-  prf(entropy, sizeof(entropy), input);
+  BORINGSSL_keccak(entropy, sizeof(entropy), input, 33, boringssl_shake256);
 
   for (int i = 0; i < DEGREE; i += 2) {
     uint8_t byte = entropy[i / 2];
@@ -627,7 +611,7 @@ void KYBER_generate_key_external_entropy(
     const uint8_t entropy[KYBER_GENERATE_KEY_ENTROPY]) {
   struct private_key *priv = private_key_from_external(out_private_key);
   uint8_t hashed[64];
-  hash_g(hashed, entropy, 32);
+  BORINGSSL_keccak(hashed, sizeof(hashed), entropy, 32, boringssl_sha3_512);
   const uint8_t *const rho = hashed;
   const uint8_t *const sigma = hashed + 32;
   OPENSSL_memcpy(priv->pub.rho, hashed, sizeof(priv->pub.rho));
@@ -647,8 +631,9 @@ void KYBER_generate_key_external_entropy(
     abort();
   }
 
-  hash_h(priv->pub.public_key_hash, out_encoded_public_key,
-         KYBER_PUBLIC_KEY_BYTES);
+  BORINGSSL_keccak(priv->pub.public_key_hash, sizeof(priv->pub.public_key_hash),
+                   out_encoded_public_key, KYBER_PUBLIC_KEY_BYTES,
+                   boringssl_sha3_256);
   OPENSSL_memcpy(priv->fo_failure_secret, entropy + 32, 32);
 }
 
@@ -697,12 +682,12 @@ static void encrypt_cpa(uint8_t out[KYBER_CIPHERTEXT_BYTES],
 
 // Calls KYBER_encap_external_entropy| with random bytes from |RAND_bytes|
 void KYBER_encap(uint8_t out_ciphertext[KYBER_CIPHERTEXT_BYTES],
-                 uint8_t out_shared_secret[KYBER_SHARED_SECRET_BYTES],
+                 uint8_t *out_shared_secret, size_t out_shared_secret_len,
                  const struct KYBER_public_key *public_key) {
   uint8_t entropy[KYBER_ENCAP_ENTROPY];
   RAND_bytes(entropy, KYBER_ENCAP_ENTROPY);
-  KYBER_encap_external_entropy(out_ciphertext, out_shared_secret, public_key,
-                               entropy);
+  KYBER_encap_external_entropy(out_ciphertext, out_shared_secret,
+                               out_shared_secret_len, public_key, entropy);
 }
 
 // Algorithm 8 of the Kyber spec, safe for line 2 of the spec. The spec there
@@ -712,9 +697,8 @@ void KYBER_encap(uint8_t out_ciphertext[KYBER_CIPHERTEXT_BYTES],
 // number generator is used, the caller should switch to a secure one before
 // calling this method.
 void KYBER_encap_external_entropy(
-    uint8_t out_ciphertext[KYBER_CIPHERTEXT_BYTES],
-    uint8_t out_shared_secret[KYBER_SHARED_SECRET_BYTES],
-    const struct KYBER_public_key *public_key,
+    uint8_t out_ciphertext[KYBER_CIPHERTEXT_BYTES], uint8_t *out_shared_secret,
+    size_t out_shared_secret_len, const struct KYBER_public_key *public_key,
     const uint8_t entropy[KYBER_ENCAP_ENTROPY]) {
   const struct public_key *pub = public_key_from_external(public_key);
   uint8_t input[64];
@@ -722,11 +706,14 @@ void KYBER_encap_external_entropy(
   OPENSSL_memcpy(input + KYBER_ENCAP_ENTROPY, pub->public_key_hash,
                  sizeof(input) - KYBER_ENCAP_ENTROPY);
   uint8_t prekey_and_randomness[64];
-  hash_g(prekey_and_randomness, input, sizeof(input));
+  BORINGSSL_keccak(prekey_and_randomness, sizeof(prekey_and_randomness), input,
+                   sizeof(input), boringssl_sha3_512);
   encrypt_cpa(out_ciphertext, pub, entropy, prekey_and_randomness + 32);
-  hash_h(prekey_and_randomness + 32, out_ciphertext, KYBER_CIPHERTEXT_BYTES);
-  kdf(out_shared_secret, KYBER_SHARED_SECRET_BYTES, prekey_and_randomness,
-      sizeof(prekey_and_randomness));
+  BORINGSSL_keccak(prekey_and_randomness + 32, 32, out_ciphertext,
+                   KYBER_CIPHERTEXT_BYTES, boringssl_sha3_256);
+  BORINGSSL_keccak(out_shared_secret, out_shared_secret_len,
+                   prekey_and_randomness, sizeof(prekey_and_randomness),
+                   boringssl_shake256);
 }
 
 // Algorithm 6 of the Kyber spec.
@@ -752,7 +739,7 @@ static void decrypt_cpa(uint8_t out[32], const struct private_key *priv,
 // failure to be passed on to the caller, and instead returns a result that is
 // deterministic but unpredictable to anyone without knowledge of the private
 // key.
-void KYBER_decap(uint8_t out_shared_secret[KYBER_SHARED_SECRET_BYTES],
+void KYBER_decap(uint8_t *out_shared_secret, size_t out_shared_secret_len,
                  const uint8_t ciphertext[KYBER_CIPHERTEXT_BYTES],
                  const struct KYBER_private_key *private_key) {
   const struct private_key *priv = private_key_from_external(private_key);
@@ -761,7 +748,8 @@ void KYBER_decap(uint8_t out_shared_secret[KYBER_SHARED_SECRET_BYTES],
   OPENSSL_memcpy(decrypted + 32, priv->pub.public_key_hash,
                  sizeof(decrypted) - 32);
   uint8_t prekey_and_randomness[64];
-  hash_g(prekey_and_randomness, decrypted, sizeof(decrypted));
+  BORINGSSL_keccak(prekey_and_randomness, sizeof(prekey_and_randomness),
+                   decrypted, sizeof(decrypted), boringssl_sha3_512);
   uint8_t expected_ciphertext[KYBER_CIPHERTEXT_BYTES];
   encrypt_cpa(expected_ciphertext, &priv->pub, decrypted,
               prekey_and_randomness + 32);
@@ -774,8 +762,10 @@ void KYBER_decap(uint8_t out_shared_secret[KYBER_SHARED_SECRET_BYTES],
     input[i] = constant_time_select_8(mask, prekey_and_randomness[i],
                                       priv->fo_failure_secret[i]);
   }
-  hash_h(input + 32, ciphertext, KYBER_CIPHERTEXT_BYTES);
-  kdf(out_shared_secret, KYBER_SHARED_SECRET_BYTES, input, sizeof(input));
+  BORINGSSL_keccak(input + 32, 32, ciphertext, KYBER_CIPHERTEXT_BYTES,
+                   boringssl_sha3_256);
+  BORINGSSL_keccak(out_shared_secret, out_shared_secret_len, input,
+                   sizeof(input), boringssl_shake256);
 }
 
 int KYBER_marshal_public_key(CBB *out,
@@ -803,7 +793,8 @@ int KYBER_parse_public_key(struct KYBER_public_key *public_key, CBS *in) {
       CBS_len(in) != 0) {
     return 0;
   }
-  hash_h(pub->public_key_hash, CBS_data(&orig_in), CBS_len(&orig_in));
+  BORINGSSL_keccak(pub->public_key_hash, sizeof(pub->public_key_hash),
+                   CBS_data(&orig_in), CBS_len(&orig_in), boringssl_sha3_256);
   return 1;
 }
 

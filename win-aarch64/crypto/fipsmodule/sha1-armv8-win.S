@@ -8,15 +8,25 @@
 
 .text
 
-.globl	sha1_block_data_order_nohw
 
-.def sha1_block_data_order_nohw
+
+.globl	sha1_block_data_order
+
+.def sha1_block_data_order
    .type 32
 .endef
 .align	6
-sha1_block_data_order_nohw:
+sha1_block_data_order:
 	// Armv8.3-A PAuth: even though x30 is pushed to stack it is not popped later.
 	AARCH64_VALID_CALL_TARGET
+#if defined(OPENSSL_HWASAN) && __clang_major__ >= 10
+	adrp	x16,:pg_hi21_nc:OPENSSL_armcap_P
+#else
+	adrp	x16,OPENSSL_armcap_P
+#endif
+	ldr	w16,[x16,:lo12:OPENSSL_armcap_P]
+	tst	w16,#ARMV8_SHA1
+	b.ne	Lv8_entry
 
 	stp	x29,x30,[sp,#-96]!
 	add	x29,sp,#0
@@ -1073,15 +1083,14 @@ Loop:
 	ldr	x29,[sp],#96
 	ret
 
-.globl	sha1_block_data_order_hw
-
-.def sha1_block_data_order_hw
+.def sha1_block_armv8
    .type 32
 .endef
 .align	6
-sha1_block_data_order_hw:
+sha1_block_armv8:
 	// Armv8.3-A PAuth: even though x30 is pushed to stack it is not popped later.
 	AARCH64_VALID_CALL_TARGET
+Lv8_entry:
 	stp	x29,x30,[sp,#-16]!
 	add	x29,sp,#0
 

@@ -50,11 +50,24 @@
 
 .text
 
-.globl	_sha512_block_data_order_nohw
-.private_extern	_sha512_block_data_order_nohw
+
+.private_extern	_OPENSSL_armcap_P
+.globl	_sha512_block_data_order
+.private_extern	_sha512_block_data_order
 
 .align	6
-_sha512_block_data_order_nohw:
+_sha512_block_data_order:
+	AARCH64_VALID_CALL_TARGET
+#ifndef	__KERNEL__
+#if defined(OPENSSL_HWASAN) && __clang_major__ >= 10
+	adrp	x16,:pg_hi21_nc:_OPENSSL_armcap_P
+#else
+	adrp	x16,_OPENSSL_armcap_P@PAGE
+#endif
+	ldr	w16,[x16,_OPENSSL_armcap_P@PAGEOFF]
+	tst	w16,#ARMV8_SHA512
+	b.ne	Lv8_entry
+#endif
 	AARCH64_SIGN_LINK_REGISTER
 	stp	x29,x30,[sp,#-128]!
 	add	x29,sp,#0
@@ -1071,13 +1084,10 @@ LK512:
 .align	2
 .text
 #ifndef	__KERNEL__
-.globl	_sha512_block_data_order_hw
-.private_extern	_sha512_block_data_order_hw
 
 .align	6
-_sha512_block_data_order_hw:
-	// Armv8.3-A PAuth: even though x30 is pushed to stack it is not popped later.
-	AARCH64_VALID_CALL_TARGET
+sha512_block_armv8:
+Lv8_entry:
 	stp	x29,x30,[sp,#-16]!
 	add	x29,sp,#0
 

@@ -54,7 +54,6 @@
  * copied and put under another distribution licence
  * [including the GNU Public Licence.] */
 
-#include <inttypes.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -69,7 +68,7 @@
 #include "internal.h"
 
 typedef struct lookup_dir_hashes_st {
-  uint32_t hash;
+  unsigned long hash;
   int suffix;
 } BY_DIR_HASH;
 
@@ -93,16 +92,17 @@ static void free_dir(X509_LOOKUP *lu);
 static int add_cert_dir(BY_DIR *ctx, const char *dir, int type);
 static int get_cert_by_subject(X509_LOOKUP *xl, int type, X509_NAME *name,
                                X509_OBJECT *ret);
-static const X509_LOOKUP_METHOD x509_dir_lookup = {
+static X509_LOOKUP_METHOD x509_dir_lookup = {
+    "Load certs from files in a directory",
     new_dir,              // new
     free_dir,             // free
+    NULL,                 // init
+    NULL,                 // shutdown
     dir_ctrl,             // ctrl
     get_cert_by_subject,  // get_by_subject
 };
 
-const X509_LOOKUP_METHOD *X509_LOOKUP_hash_dir(void) {
-  return &x509_dir_lookup;
-}
+X509_LOOKUP_METHOD *X509_LOOKUP_hash_dir(void) { return &x509_dir_lookup; }
 
 static int dir_ctrl(X509_LOOKUP *ctx, int cmd, const char *argp, long argl,
                     char **retp) {
@@ -247,8 +247,8 @@ static int get_cert_by_subject(X509_LOOKUP *xl, int type, X509_NAME *name,
   int ok = 0;
   size_t i;
   int j, k;
-  uint32_t h;
-  uint32_t hash_array[2];
+  unsigned long h;
+  unsigned long hash_array[2];
   int hash_index;
   BUF_MEM *b = NULL;
   X509_OBJECT stmp, *tmp;
@@ -310,8 +310,7 @@ static int get_cert_by_subject(X509_LOOKUP *xl, int type, X509_NAME *name,
         hent = NULL;
       }
       for (;;) {
-        snprintf(b->data, b->max, "%s/%08" PRIx32 ".%s%d", ent->dir, h, postfix,
-                 k);
+        snprintf(b->data, b->max, "%s/%08lx.%s%d", ent->dir, h, postfix, k);
 #ifndef OPENSSL_NO_POSIX_IO
 #if defined(_WIN32) && !defined(stat)
 #define stat _stat
@@ -400,8 +399,4 @@ static int get_cert_by_subject(X509_LOOKUP *xl, int type, X509_NAME *name,
 finish:
   BUF_MEM_free(b);
   return ok;
-}
-
-int X509_LOOKUP_add_dir(X509_LOOKUP *lookup, const char *name, int type) {
-  return X509_LOOKUP_ctrl(lookup, X509_L_ADD_DIR, name, type, NULL);
 }
