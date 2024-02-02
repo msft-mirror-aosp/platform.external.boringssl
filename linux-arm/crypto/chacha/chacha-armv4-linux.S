@@ -31,7 +31,7 @@
 .long	1,0,0,0
 #if __ARM_MAX_ARCH__>=7
 .LOPENSSL_armcap:
-.word	OPENSSL_armcap_P-.LChaCha20_ctr32
+.word	OPENSSL_armcap_P-.Lsigma
 #else
 .word	-1
 #endif
@@ -44,11 +44,7 @@ ChaCha20_ctr32:
 .LChaCha20_ctr32:
 	ldr	r12,[sp,#0]		@ pull pointer to counter and nonce
 	stmdb	sp!,{r0,r1,r2,r4-r11,lr}
-#if __ARM_ARCH__<7 && !defined(__thumb2__)
-	sub	r14,pc,#16		@ ChaCha20_ctr32
-#else
-	adr	r14,.LChaCha20_ctr32
-#endif
+	adr	r14,.Lsigma
 	cmp	r2,#0			@ len==0?
 #ifdef	__thumb2__
 	itt	eq
@@ -58,7 +54,7 @@ ChaCha20_ctr32:
 #if __ARM_MAX_ARCH__>=7
 	cmp	r2,#192			@ test len
 	bls	.Lshort
-	ldr	r4,[r14,#-32]
+	ldr	r4,[r14,#32]
 	ldr	r4,[r14,r4]
 # ifdef	__APPLE__
 	ldr	r4,[r4]
@@ -69,7 +65,6 @@ ChaCha20_ctr32:
 #endif
 	ldmia	r12,{r4,r5,r6,r7}		@ load counter and nonce
 	sub	sp,sp,#4*(16)		@ off-load area
-	sub	r14,r14,#64		@ .Lsigma
 	stmdb	sp!,{r4,r5,r6,r7}		@ copy counter and nonce
 	ldmia	r3,{r4,r5,r6,r7,r8,r9,r10,r11}		@ load key
 	ldmia	r14,{r0,r1,r2,r3}		@ load sigma
@@ -230,8 +225,8 @@ ChaCha20_ctr32:
 	ldr	r8,[sp,#4*(0)]	@ load key material
 	ldr	r9,[sp,#4*(1)]
 
-#if __ARM_ARCH__>=6 || !defined(__ARMEB__)
-# if __ARM_ARCH__<7
+#if __ARM_ARCH>=6 || !defined(__ARMEB__)
+# if __ARM_ARCH<7
 	orr	r10,r12,r14
 	tst	r10,#3		@ are input and output aligned?
 	ldr	r10,[sp,#4*(2)]
@@ -257,7 +252,7 @@ ChaCha20_ctr32:
 # endif
 	ldrhs	r10,[r12,#-8]
 	ldrhs	r11,[r12,#-4]
-# if __ARM_ARCH__>=6 && defined(__ARMEB__)
+# if __ARM_ARCH>=6 && defined(__ARMEB__)
 	rev	r0,r0
 	rev	r1,r1
 	rev	r2,r2
@@ -294,7 +289,7 @@ ChaCha20_ctr32:
 # endif
 	ldrhs	r10,[r12,#-8]
 	ldrhs	r11,[r12,#-4]
-# if __ARM_ARCH__>=6 && defined(__ARMEB__)
+# if __ARM_ARCH>=6 && defined(__ARMEB__)
 	rev	r4,r4
 	rev	r5,r5
 	rev	r6,r6
@@ -339,7 +334,7 @@ ChaCha20_ctr32:
 # endif
 	ldrhs	r10,[r12,#-8]
 	ldrhs	r11,[r12,#-4]
-# if __ARM_ARCH__>=6 && defined(__ARMEB__)
+# if __ARM_ARCH>=6 && defined(__ARMEB__)
 	rev	r0,r0
 	rev	r1,r1
 	rev	r2,r2
@@ -381,7 +376,7 @@ ChaCha20_ctr32:
 # endif
 	ldrhs	r10,[r12,#-8]
 	ldrhs	r11,[r12,#-4]
-# if __ARM_ARCH__>=6 && defined(__ARMEB__)
+# if __ARM_ARCH>=6 && defined(__ARMEB__)
 	rev	r4,r4
 	rev	r5,r5
 	rev	r6,r6
@@ -412,7 +407,7 @@ ChaCha20_ctr32:
 	bhi	.Loop_outer
 
 	beq	.Ldone
-# if __ARM_ARCH__<7
+# if __ARM_ARCH<7
 	b	.Ltail
 
 .align	4
@@ -420,7 +415,7 @@ ChaCha20_ctr32:
 	cmp	r11,#64		@ restore flags
 # endif
 #endif
-#if __ARM_ARCH__<7
+#if __ARM_ARCH<7
 	ldr	r11,[sp,#4*(3)]
 	add	r0,r0,r8		@ accumulate key material
 	add	r1,r1,r9

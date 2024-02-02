@@ -12,6 +12,8 @@
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE. */
 
+#include <limits.h>
+
 #include <algorithm>
 #include <functional>
 #include <string>
@@ -31,12 +33,10 @@
 #include <openssl/pem.h>
 #include <openssl/pool.h>
 #include <openssl/x509.h>
-#include <openssl/x509v3.h>
 
 #include "internal.h"
 #include "../internal.h"
 #include "../test/test_util.h"
-#include "../x509v3/internal.h"
 
 #if defined(OPENSSL_THREADS)
 #include <thread>
@@ -1182,33 +1182,37 @@ TEST(X509Test, TestVerify) {
   // though in different ways.
   for (bool trusted_first : {true, false}) {
     SCOPED_TRACE(trusted_first);
-    std::function<void(X509_VERIFY_PARAM *)> configure_callback;
-    if (!trusted_first) {
+    bool override_depth = false;
+    int depth = -1;
+    auto configure_callback = [&](X509_VERIFY_PARAM *param) {
       // Note we need the callback to clear the flag. Setting |flags| to zero
       // only skips setting new flags.
-      configure_callback = [&](X509_VERIFY_PARAM *param) {
+      if (!trusted_first) {
         X509_VERIFY_PARAM_clear_flags(param, X509_V_FLAG_TRUSTED_FIRST);
-      };
-    }
+      }
+      if (override_depth) {
+        X509_VERIFY_PARAM_set_depth(param, depth);
+      }
+    };
 
     // No trust anchors configured.
-    ASSERT_EQ(X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
+    EXPECT_EQ(X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
               Verify(leaf.get(), /*roots=*/{}, /*intermediates=*/{},
                      /*crls=*/{}, /*flags=*/0, configure_callback));
-    ASSERT_EQ(
+    EXPECT_EQ(
         X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
         Verify(leaf.get(), /*roots=*/{}, {intermediate.get()}, /*crls=*/{},
                /*flags=*/0, configure_callback));
 
     // Each chain works individually.
-    ASSERT_EQ(X509_V_OK, Verify(leaf.get(), {root.get()}, {intermediate.get()},
+    EXPECT_EQ(X509_V_OK, Verify(leaf.get(), {root.get()}, {intermediate.get()},
                                 /*crls=*/{}, /*flags=*/0, configure_callback));
-    ASSERT_EQ(X509_V_OK, Verify(leaf.get(), {cross_signing_root.get()},
+    EXPECT_EQ(X509_V_OK, Verify(leaf.get(), {cross_signing_root.get()},
                                 {intermediate.get(), root_cross_signed.get()},
                                 /*crls=*/{}, /*flags=*/0, configure_callback));
 
     // When both roots are available, we pick one or the other.
-    ASSERT_EQ(X509_V_OK,
+    EXPECT_EQ(X509_V_OK,
               Verify(leaf.get(), {cross_signing_root.get(), root.get()},
                      {intermediate.get(), root_cross_signed.get()}, /*crls=*/{},
                      /*flags=*/0, configure_callback));
@@ -1217,7 +1221,7 @@ TEST(X509Test, TestVerify) {
     // the cross-sign in the intermediates. With |trusted_first|, we
     // preferentially stop path-building at |intermediate|. Without
     // |trusted_first|, the "altchains" logic repairs it.
-    ASSERT_EQ(X509_V_OK, Verify(leaf.get(), {root.get()},
+    EXPECT_EQ(X509_V_OK, Verify(leaf.get(), {root.get()},
                                 {intermediate.get(), root_cross_signed.get()},
                                 /*crls=*/{}, /*flags=*/0, configure_callback));
 
@@ -1228,7 +1232,7 @@ TEST(X509Test, TestVerify) {
     // This test exists to confirm our current behavior, but these modes are
     // just workarounds for not having an actual path-building verifier. If we
     // fix it, this test can be removed.
-    ASSERT_EQ(trusted_first ? X509_V_OK
+    EXPECT_EQ(trusted_first ? X509_V_OK
                             : X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
               Verify(leaf.get(), {root.get()},
                      {intermediate.get(), root_cross_signed.get()}, /*crls=*/{},
@@ -1236,18 +1240,45 @@ TEST(X509Test, TestVerify) {
 
     // |forgery| is signed by |leaf_no_key_usage|, but is rejected because the
     // leaf is not a CA.
-    ASSERT_EQ(X509_V_ERR_INVALID_CA,
+    EXPECT_EQ(X509_V_ERR_INVALID_CA,
               Verify(forgery.get(), {intermediate_self_signed.get()},
                      {leaf_no_key_usage.get()}, /*crls=*/{}, /*flags=*/0,
                      configure_callback));
 
     // Test that one cannot skip Basic Constraints checking with a contorted set
     // of roots and intermediates. This is a regression test for CVE-2015-1793.
-    ASSERT_EQ(X509_V_ERR_INVALID_CA,
+    EXPECT_EQ(X509_V_ERR_INVALID_CA,
               Verify(forgery.get(),
                      {intermediate_self_signed.get(), root_cross_signed.get()},
                      {leaf_no_key_usage.get(), intermediate.get()}, /*crls=*/{},
                      /*flags=*/0, configure_callback));
+
+    // Test depth limits. |configure_callback| looks at |override_depth| and
+    // |depth|. Negative numbers have historically worked, so test those too.
+    for (int d : {-4, -3, -2, -1, 0, 1, 2, 3, 4, INT_MAX - 3, INT_MAX - 2,
+                  INT_MAX - 1, INT_MAX}) {
+      SCOPED_TRACE(d);
+      override_depth = true;
+      depth = d;
+      // A chain with a leaf, two intermediates, and a root is depth two.
+      EXPECT_EQ(
+          depth >= 2 ? X509_V_OK : X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
+          Verify(leaf.get(), {cross_signing_root.get()},
+                 {intermediate.get(), root_cross_signed.get()},
+                 /*crls=*/{}, /*flags=*/0, configure_callback));
+
+      // A chain with a leaf, a root, and no intermediates is depth zero.
+      EXPECT_EQ(
+          depth >= 0 ? X509_V_OK : X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT_LOCALLY,
+          Verify(root_cross_signed.get(), {cross_signing_root.get()}, {},
+                 /*crls=*/{}, /*flags=*/0, configure_callback));
+
+      // An explicitly trusted self-signed certificate is unaffected by depth
+      // checks.
+      EXPECT_EQ(X509_V_OK,
+                Verify(cross_signing_root.get(), {cross_signing_root.get()}, {},
+                       /*crls=*/{}, /*flags=*/0, configure_callback));
+    }
   }
 }
 
@@ -1496,6 +1527,14 @@ TEST(X509Test, TestCRL) {
                      X509_VERIFY_PARAM_set_time_posix(
                          param, kReferenceTime + 2 * 30 * 24 * 3600);
                    }));
+
+  // We no longer support indirect or delta CRLs.
+  EXPECT_EQ(X509_V_ERR_INVALID_CALL,
+            Verify(leaf.get(), {root.get()}, {root.get()}, {basic_crl.get()},
+                   X509_V_FLAG_CRL_CHECK | X509_V_FLAG_EXTENDED_CRL_SUPPORT));
+  EXPECT_EQ(X509_V_ERR_INVALID_CALL,
+            Verify(leaf.get(), {root.get()}, {root.get()}, {basic_crl.get()},
+                   X509_V_FLAG_CRL_CHECK | X509_V_FLAG_USE_DELTAS));
 
   // Parsing kBadExtensionCRL should fail.
   EXPECT_FALSE(CRLFromPEM(kBadExtensionCRL));
@@ -2576,8 +2615,8 @@ TEST(X509Test, X509NameSet) {
 TEST(X509Test, NameHash) {
   struct {
     std::vector<uint8_t> name_der;
-    unsigned long hash;
-    unsigned long hash_old;
+    uint32_t hash;
+    uint32_t hash_old;
   } kTests[] = {
       // SEQUENCE {
       //   SET {
@@ -3401,6 +3440,18 @@ TEST(X509Test, NullStore) {
   EXPECT_FALSE(X509_STORE_CTX_init(ctx.get(), nullptr, leaf.get(), nullptr));
 }
 
+TEST(X509Test, StoreCtxReuse) {
+  bssl::UniquePtr<X509> leaf(CertFromPEM(kLeafPEM));
+  ASSERT_TRUE(leaf);
+  bssl::UniquePtr<X509_STORE> store(X509_STORE_new());
+  ASSERT_TRUE(store);
+  bssl::UniquePtr<X509_STORE_CTX> ctx(X509_STORE_CTX_new());
+  ASSERT_TRUE(ctx);
+  ASSERT_TRUE(X509_STORE_CTX_init(ctx.get(), store.get(), leaf.get(), nullptr));
+  // Re-initializing |ctx| should not leak memory.
+  ASSERT_TRUE(X509_STORE_CTX_init(ctx.get(), store.get(), leaf.get(), nullptr));
+}
+
 TEST(X509Test, BasicConstraints) {
   const uint32_t kFlagMask = EXFLAG_CA | EXFLAG_BCONS | EXFLAG_INVALID;
 
@@ -3814,46 +3865,62 @@ TEST(X509Test, X509AlgorExtract) {
 
 // Test the various |X509_ATTRIBUTE| creation functions.
 TEST(X509Test, Attribute) {
-  // The friendlyName attribute has a BMPString value. See RFC 2985,
-  // section 5.5.1.
+  // The expected attribute values are:
+  // 1. BMPString U+2603
+  // 2. BMPString "test"
+  // 3. INTEGER -1 (not valid for friendlyName)
   static const uint8_t kTest1[] = {0x26, 0x03};  // U+2603 SNOWMAN
   static const uint8_t kTest1UTF8[] = {0xe2, 0x98, 0x83};
   static const uint8_t kTest2[] = {0, 't', 0, 'e', 0, 's', 0, 't'};
 
-  auto check_attribute = [&](X509_ATTRIBUTE *attr, bool has_test2) {
+  constexpr uint32_t kTest1Mask = 1 << 0;
+  constexpr uint32_t kTest2Mask = 1 << 1;
+  constexpr uint32_t kTest3Mask = 1 << 2;
+  auto check_attribute = [&](X509_ATTRIBUTE *attr, uint32_t mask) {
     EXPECT_EQ(NID_friendlyName, OBJ_obj2nid(X509_ATTRIBUTE_get0_object(attr)));
 
-    EXPECT_EQ(has_test2 ? 2 : 1, X509_ATTRIBUTE_count(attr));
+    int idx = 0;
+    if (mask & kTest1Mask) {
+      // The first attribute should contain |kTest1|.
+      const ASN1_TYPE *value = X509_ATTRIBUTE_get0_type(attr, idx);
+      ASSERT_TRUE(value);
+      EXPECT_EQ(V_ASN1_BMPSTRING, value->type);
+      EXPECT_EQ(Bytes(kTest1),
+                Bytes(ASN1_STRING_get0_data(value->value.bmpstring),
+                      ASN1_STRING_length(value->value.bmpstring)));
 
-    // The first attribute should contain |kTest1|.
-    const ASN1_TYPE *value = X509_ATTRIBUTE_get0_type(attr, 0);
-    ASSERT_TRUE(value);
-    EXPECT_EQ(V_ASN1_BMPSTRING, value->type);
-    EXPECT_EQ(Bytes(kTest1),
-              Bytes(ASN1_STRING_get0_data(value->value.bmpstring),
-                    ASN1_STRING_length(value->value.bmpstring)));
+      // |X509_ATTRIBUTE_get0_data| requires the type match.
+      EXPECT_FALSE(
+          X509_ATTRIBUTE_get0_data(attr, idx, V_ASN1_OCTET_STRING, nullptr));
+      const ASN1_BMPSTRING *bmpstring = static_cast<const ASN1_BMPSTRING *>(
+          X509_ATTRIBUTE_get0_data(attr, idx, V_ASN1_BMPSTRING, nullptr));
+      ASSERT_TRUE(bmpstring);
+      EXPECT_EQ(Bytes(kTest1), Bytes(ASN1_STRING_get0_data(bmpstring),
+                                     ASN1_STRING_length(bmpstring)));
+      idx++;
+    }
 
-    // |X509_ATTRIBUTE_get0_data| requires the type match.
-    EXPECT_FALSE(
-        X509_ATTRIBUTE_get0_data(attr, 0, V_ASN1_OCTET_STRING, nullptr));
-    const ASN1_BMPSTRING *bmpstring = static_cast<const ASN1_BMPSTRING *>(
-        X509_ATTRIBUTE_get0_data(attr, 0, V_ASN1_BMPSTRING, nullptr));
-    ASSERT_TRUE(bmpstring);
-    EXPECT_EQ(Bytes(kTest1), Bytes(ASN1_STRING_get0_data(bmpstring),
-                                   ASN1_STRING_length(bmpstring)));
-
-    if (has_test2) {
-      value = X509_ATTRIBUTE_get0_type(attr, 1);
+    if (mask & kTest2Mask) {
+      const ASN1_TYPE *value = X509_ATTRIBUTE_get0_type(attr, idx);
       ASSERT_TRUE(value);
       EXPECT_EQ(V_ASN1_BMPSTRING, value->type);
       EXPECT_EQ(Bytes(kTest2),
                 Bytes(ASN1_STRING_get0_data(value->value.bmpstring),
                       ASN1_STRING_length(value->value.bmpstring)));
-    } else {
-      EXPECT_FALSE(X509_ATTRIBUTE_get0_type(attr, 1));
+      idx++;
     }
 
-    EXPECT_FALSE(X509_ATTRIBUTE_get0_type(attr, 2));
+    if (mask & kTest3Mask) {
+      const ASN1_TYPE *value = X509_ATTRIBUTE_get0_type(attr, idx);
+      ASSERT_TRUE(value);
+      EXPECT_EQ(V_ASN1_INTEGER, value->type);
+      int64_t v;
+      ASSERT_TRUE(ASN1_INTEGER_get_int64(&v, value->value.integer));
+      EXPECT_EQ(v, -1);
+      idx++;
+    }
+
+    EXPECT_FALSE(X509_ATTRIBUTE_get0_type(attr, idx));
   };
 
   bssl::UniquePtr<ASN1_STRING> str(ASN1_STRING_type_new(V_ASN1_BMPSTRING));
@@ -3865,7 +3932,7 @@ TEST(X509Test, Attribute) {
       X509_ATTRIBUTE_create(NID_friendlyName, V_ASN1_BMPSTRING, str.get()));
   ASSERT_TRUE(attr);
   str.release();  // |X509_ATTRIBUTE_create| takes ownership on success.
-  check_attribute(attr.get(), /*has_test2=*/false);
+  check_attribute(attr.get(), kTest1Mask);
 
   // Test the |MBSTRING_*| form of |X509_ATTRIBUTE_set1_data|.
   attr.reset(X509_ATTRIBUTE_new());
@@ -3874,12 +3941,19 @@ TEST(X509Test, Attribute) {
       X509_ATTRIBUTE_set1_object(attr.get(), OBJ_nid2obj(NID_friendlyName)));
   ASSERT_TRUE(X509_ATTRIBUTE_set1_data(attr.get(), MBSTRING_UTF8, kTest1UTF8,
                                        sizeof(kTest1UTF8)));
-  check_attribute(attr.get(), /*has_test2=*/false);
+  check_attribute(attr.get(), kTest1Mask);
 
   // Test the |ASN1_STRING| form of |X509_ATTRIBUTE_set1_data|.
   ASSERT_TRUE(X509_ATTRIBUTE_set1_data(attr.get(), V_ASN1_BMPSTRING, kTest2,
                                        sizeof(kTest2)));
-  check_attribute(attr.get(), /*has_test2=*/true);
+  check_attribute(attr.get(), kTest1Mask | kTest2Mask);
+
+  // The |ASN1_STRING| form of |X509_ATTRIBUTE_set1_data| should correctly
+  // handle negative integers.
+  const uint8_t kOne = 1;
+  ASSERT_TRUE(
+      X509_ATTRIBUTE_set1_data(attr.get(), V_ASN1_NEG_INTEGER, &kOne, 1));
+  check_attribute(attr.get(), kTest1Mask | kTest2Mask | kTest3Mask);
 
   // Test the |ASN1_TYPE| form of |X509_ATTRIBUTE_set1_data|.
   attr.reset(X509_ATTRIBUTE_new());
@@ -3891,7 +3965,13 @@ TEST(X509Test, Attribute) {
   ASSERT_TRUE(ASN1_STRING_set(str.get(), kTest1, sizeof(kTest1)));
   ASSERT_TRUE(
       X509_ATTRIBUTE_set1_data(attr.get(), V_ASN1_BMPSTRING, str.get(), -1));
-  check_attribute(attr.get(), /*has_test2=*/false);
+  check_attribute(attr.get(), kTest1Mask);
+
+  // An |attrtype| of zero leaves the attribute empty.
+  attr.reset(X509_ATTRIBUTE_create_by_NID(
+      nullptr, NID_friendlyName, /*attrtype=*/0, /*data=*/nullptr, /*len=*/0));
+  ASSERT_TRUE(attr);
+  check_attribute(attr.get(), 0);
 }
 
 // Test that, by default, |X509_V_FLAG_TRUSTED_FIRST| is set, which means we'll
@@ -6456,7 +6536,7 @@ TEST(X509Test, AddUnserializableExtension) {
       MakeTestCert("Issuer", "Subject", key.get(), /*is_ca=*/true);
   ASSERT_TRUE(x509);
   bssl::UniquePtr<X509_EXTENSION> ext(X509_EXTENSION_new());
-  ASSERT_TRUE(X509_EXTENSION_set_object(ext.get(), OBJ_nid2obj(NID_undef)));
+  ASSERT_TRUE(X509_EXTENSION_set_object(ext.get(), OBJ_get_undef()));
   EXPECT_FALSE(X509_add_ext(x509.get(), ext.get(), /*loc=*/-1));
 }
 
@@ -6547,6 +6627,30 @@ TEST(X509Test, NameAttributeValues) {
   // we decide to later.
   static const uint8_t kOID[] = {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12,
                                  0x04, 0x01, 0x84, 0xb7, 0x09, 0x00};
+  static const char kOIDText[] = "1.2.840.113554.4.1.72585.0";
+
+  auto encode_single_attribute_name =
+      [](CBS_ASN1_TAG tag,
+         const std::string &contents) -> std::vector<uint8_t> {
+    bssl::ScopedCBB cbb;
+    CBB seq, rdn, attr, attr_type, attr_value;
+    if (!CBB_init(cbb.get(), 128) ||
+        !CBB_add_asn1(cbb.get(), &seq, CBS_ASN1_SEQUENCE) ||
+        !CBB_add_asn1(&seq, &rdn, CBS_ASN1_SET) ||
+        !CBB_add_asn1(&rdn, &attr, CBS_ASN1_SEQUENCE) ||
+        !CBB_add_asn1(&attr, &attr_type, CBS_ASN1_OBJECT) ||
+        !CBB_add_bytes(&attr_type, kOID, sizeof(kOID)) ||
+        !CBB_add_asn1(&attr, &attr_value, tag) ||
+        !CBB_add_bytes(&attr_value,
+                       reinterpret_cast<const uint8_t *>(contents.data()),
+                       contents.size()) ||
+        !CBB_flush(cbb.get())) {
+      ADD_FAILURE() << "Could not encode name";
+      return {};
+    };
+    return std::vector<uint8_t>(CBB_data(cbb.get()),
+                                CBB_data(cbb.get()) + CBB_len(cbb.get()));
+  };
 
   const struct {
     CBS_ASN1_TAG der_tag;
@@ -6568,6 +6672,11 @@ TEST(X509Test, NameAttributeValues) {
 
       // ENUMERATED is supported but, currently, INTEGER is not.
       {CBS_ASN1_ENUMERATED, "\x01", V_ASN1_ENUMERATED, "\x01"},
+
+      // Test negative values. These are interesting because, when encoding, the
+      // ASN.1 type must be determined from the string type, but the string type
+      // has an extra |V_ASN1_NEG| bit.
+      {CBS_ASN1_ENUMERATED, "\xff", V_ASN1_NEG_ENUMERATED, "\x01"},
 
       // SEQUENCE is supported but, currently, SET is not. Note the
       // |ASN1_STRING| representation will include the tag and length.
@@ -6596,27 +6705,16 @@ TEST(X509Test, NameAttributeValues) {
 
     // Construct an X.509 name containing a single RDN with a single attribute:
     // kOID with the specified value.
-    bssl::ScopedCBB cbb;
-    ASSERT_TRUE(CBB_init(cbb.get(), 128));
-    CBB seq, rdn, attr, attr_type, attr_value;
-    ASSERT_TRUE(CBB_add_asn1(cbb.get(), &seq, CBS_ASN1_SEQUENCE));
-    ASSERT_TRUE(CBB_add_asn1(&seq, &rdn, CBS_ASN1_SET));
-    ASSERT_TRUE(CBB_add_asn1(&rdn, &attr, CBS_ASN1_SEQUENCE));
-    ASSERT_TRUE(CBB_add_asn1(&attr, &attr_type, CBS_ASN1_OBJECT));
-    ASSERT_TRUE(CBB_add_bytes(&attr_type, kOID, sizeof(kOID)));
-    ASSERT_TRUE(CBB_add_asn1(&attr, &attr_value, t.der_tag));
-    ASSERT_TRUE(CBB_add_bytes(
-        &attr_value, reinterpret_cast<const uint8_t *>(t.der_contents.data()),
-        t.der_contents.size()));
-    ASSERT_TRUE(CBB_flush(cbb.get()));
-    SCOPED_TRACE(Bytes(CBB_data(cbb.get()), CBB_len(cbb.get())));
+    auto encoded = encode_single_attribute_name(t.der_tag, t.der_contents);
+    ASSERT_FALSE(encoded.empty());
+    SCOPED_TRACE(Bytes(encoded));
 
     // The input should parse.
-    const uint8_t *inp = CBB_data(cbb.get());
+    const uint8_t *inp = encoded.data();
     bssl::UniquePtr<X509_NAME> name(
-        d2i_X509_NAME(nullptr, &inp, CBB_len(cbb.get())));
+        d2i_X509_NAME(nullptr, &inp, encoded.size()));
     ASSERT_TRUE(name);
-    EXPECT_EQ(inp, CBB_data(cbb.get()) + CBB_len(cbb.get()))
+    EXPECT_EQ(inp, encoded.data() + encoded.size())
         << "input was not fully consumed";
 
     // Check there is a single attribute with the expected in-memory
@@ -6635,7 +6733,233 @@ TEST(X509Test, NameAttributeValues) {
     int der_len = i2d_X509_NAME(name.get(), &der);
     ASSERT_GE(der_len, 0);
     bssl::UniquePtr<uint8_t> free_der(der);
-    EXPECT_EQ(Bytes(der, der_len),
-              (Bytes(CBB_data(cbb.get()), CBB_len(cbb.get()))));
+    EXPECT_EQ(Bytes(der, der_len), Bytes(encoded));
+
+    // X509_NAME internally caches its encoding, which means the check above
+    // does not fully test re-encoding. Repeat the test by constructing an
+    // |X509_NAME| from the string representation.
+    name.reset(X509_NAME_new());
+    ASSERT_TRUE(name);
+    ASSERT_TRUE(X509_NAME_add_entry_by_txt(
+        name.get(), kOIDText, t.str_type,
+        reinterpret_cast<const uint8_t *>(t.str_contents.data()),
+        t.str_contents.size(), /*loc=*/-1, /*set=*/0));
+
+    // The name should re-encode with the same input.
+    der = nullptr;
+    der_len = i2d_X509_NAME(name.get(), &der);
+    ASSERT_GE(der_len, 0);
+    free_der.reset(der);
+    EXPECT_EQ(Bytes(der, der_len), Bytes(encoded));
+  }
+
+  const struct {
+    CBS_ASN1_TAG der_tag;
+    std::string der_contents;
+  } kInvalidTests[] = {
+      // Errors in supported universal types should be handled.
+      {CBS_ASN1_NULL, "not null"},
+      {CBS_ASN1_BOOLEAN, "not bool"},
+      {CBS_ASN1_OBJECT, ""},
+      {CBS_ASN1_INTEGER, std::string("\0\0", 2)},
+      {CBS_ASN1_ENUMERATED, std::string("\0\0", 2)},
+      {CBS_ASN1_BITSTRING, ""},
+      {CBS_ASN1_UTF8STRING, "not utf-8 \xff"},
+      {CBS_ASN1_BMPSTRING, "not utf-16 "},
+      {CBS_ASN1_UNIVERSALSTRING, "not utf-32"},
+      {CBS_ASN1_UTCTIME, "not utctime"},
+      {CBS_ASN1_GENERALIZEDTIME, "not generalizedtime"},
+      {CBS_ASN1_UTF8STRING | CBS_ASN1_CONSTRUCTED, ""},
+      {CBS_ASN1_SEQUENCE & ~CBS_ASN1_CONSTRUCTED, ""},
+
+      // TODO(crbug.com/boringssl/412): The following inputs should parse, but
+      // are currently rejected because they cannot be represented in
+      // |ASN1_PRINTABLE|, either because they don't fit in |ASN1_STRING| or
+      // simply in the |B_ASN1_PRINTABLE| bitmask.
+      {CBS_ASN1_NULL, ""},
+      {CBS_ASN1_BOOLEAN, std::string("\x00", 1)},
+      {CBS_ASN1_BOOLEAN, "\xff"},
+      {CBS_ASN1_OBJECT, "\x01\x02\x03\x04"},
+      {CBS_ASN1_INTEGER, "\x01"},
+      {CBS_ASN1_INTEGER, "\xff"},
+      {CBS_ASN1_OCTETSTRING, ""},
+      {CBS_ASN1_UTCTIME, "700101000000Z"},
+      {CBS_ASN1_GENERALIZEDTIME, "19700101000000Z"},
+      {CBS_ASN1_SET, ""},
+      {CBS_ASN1_APPLICATION | CBS_ASN1_CONSTRUCTED | 42, ""},
+      {CBS_ASN1_APPLICATION | 42, ""},
+  };
+  for (const auto &t : kInvalidTests) {
+    SCOPED_TRACE(t.der_tag);
+    SCOPED_TRACE(Bytes(t.der_contents));
+
+    // Construct an X.509 name containing a single RDN with a single attribute:
+    // kOID with the specified value.
+    auto encoded = encode_single_attribute_name(t.der_tag, t.der_contents);
+    ASSERT_FALSE(encoded.empty());
+    SCOPED_TRACE(Bytes(encoded));
+
+    // The input should not parse.
+    const uint8_t *inp = encoded.data();
+    bssl::UniquePtr<X509_NAME> name(
+        d2i_X509_NAME(nullptr, &inp, encoded.size()));
+    EXPECT_FALSE(name);
+  }
+}
+
+TEST(X509Test, GetTextByOBJ) {
+  struct OBJTestCase {
+    const char *content;
+    int content_type;
+    int len;
+    int expected_result;
+    const char *expected_string;
+  } kTests[] = {
+      {"", V_ASN1_UTF8STRING, 0, 0, ""},
+      {"derp", V_ASN1_UTF8STRING, 4, 4, "derp"},
+      {"\x30\x00",  // Empty sequence can not be converted to UTF-8
+       V_ASN1_SEQUENCE, 2, -1, ""},
+      {
+          "der\0p",
+          V_ASN1_TELETEXSTRING,
+          5,
+          -1,
+          "",
+      },
+      {
+          "0123456789ABCDEF",
+          V_ASN1_IA5STRING,
+          16,
+          16,
+          "0123456789ABCDEF",
+      },
+      {
+          "\x07\xff",
+          V_ASN1_BMPSTRING,
+          2,
+          2,
+          "\xdf\xbf",
+      },
+      {
+          "\x00\xc3\x00\xaf",
+          V_ASN1_BMPSTRING,
+          4,
+          4,
+          "\xc3\x83\xc2\xaf",
+      },
+  };
+  for (const auto &test : kTests) {
+    bssl::UniquePtr<X509_NAME> name(X509_NAME_new());
+    ASSERT_TRUE(name);
+    ASSERT_TRUE(X509_NAME_add_entry_by_NID(
+        name.get(), NID_commonName, test.content_type,
+        reinterpret_cast<const uint8_t *>(test.content), test.len, /*loc=*/-1,
+        /*set=*/0));
+    char text[256] = {};
+    EXPECT_EQ(test.expected_result,
+              X509_NAME_get_text_by_NID(name.get(), NID_commonName, text,
+                                        sizeof(text)));
+    EXPECT_STREQ(text, test.expected_string);
+    if (test.expected_result > 0) {
+      // Test truncation. The function writes a trailing NUL byte so the
+      // buffer needs to be one bigger than the expected result.
+      char small[2] = "a";
+      EXPECT_EQ(
+          -1, X509_NAME_get_text_by_NID(name.get(), NID_commonName, small, 1));
+      // The buffer should be unmodified by truncation failure.
+      EXPECT_STREQ(small, "a");
+    }
+  }
+}
+
+TEST(X509Test, ParamInheritance) {
+  // |X509_VERIFY_PARAM_inherit| with both unset.
+  {
+    bssl::UniquePtr<X509_VERIFY_PARAM> dest(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(dest);
+    bssl::UniquePtr<X509_VERIFY_PARAM> src(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(src);
+    ASSERT_TRUE(X509_VERIFY_PARAM_inherit(dest.get(), src.get()));
+    EXPECT_EQ(X509_VERIFY_PARAM_get_depth(dest.get()), -1);
+  }
+
+  // |X509_VERIFY_PARAM_inherit| with source set.
+  {
+    bssl::UniquePtr<X509_VERIFY_PARAM> dest(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(dest);
+    bssl::UniquePtr<X509_VERIFY_PARAM> src(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(src);
+    X509_VERIFY_PARAM_set_depth(src.get(), 5);
+    ASSERT_TRUE(X509_VERIFY_PARAM_inherit(dest.get(), src.get()));
+    EXPECT_EQ(X509_VERIFY_PARAM_get_depth(dest.get()), 5);
+  }
+
+  // |X509_VERIFY_PARAM_inherit| with destination set.
+  {
+    bssl::UniquePtr<X509_VERIFY_PARAM> dest(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(dest);
+    bssl::UniquePtr<X509_VERIFY_PARAM> src(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(src);
+    X509_VERIFY_PARAM_set_depth(dest.get(), 5);
+    ASSERT_TRUE(X509_VERIFY_PARAM_inherit(dest.get(), src.get()));
+    EXPECT_EQ(X509_VERIFY_PARAM_get_depth(dest.get()), 5);
+  }
+
+  // |X509_VERIFY_PARAM_inherit| with both set.
+  {
+    bssl::UniquePtr<X509_VERIFY_PARAM> dest(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(dest);
+    bssl::UniquePtr<X509_VERIFY_PARAM> src(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(src);
+    X509_VERIFY_PARAM_set_depth(dest.get(), 5);
+    X509_VERIFY_PARAM_set_depth(src.get(), 10);
+    ASSERT_TRUE(X509_VERIFY_PARAM_inherit(dest.get(), src.get()));
+    // The existing value is used.
+    EXPECT_EQ(X509_VERIFY_PARAM_get_depth(dest.get()), 5);
+  }
+
+    // |X509_VERIFY_PARAM_set1| with both unset.
+  {
+    bssl::UniquePtr<X509_VERIFY_PARAM> dest(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(dest);
+    bssl::UniquePtr<X509_VERIFY_PARAM> src(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(src);
+    ASSERT_TRUE(X509_VERIFY_PARAM_set1(dest.get(), src.get()));
+    EXPECT_EQ(X509_VERIFY_PARAM_get_depth(dest.get()), -1);
+  }
+
+  // |X509_VERIFY_PARAM_set1| with source set.
+  {
+    bssl::UniquePtr<X509_VERIFY_PARAM> dest(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(dest);
+    bssl::UniquePtr<X509_VERIFY_PARAM> src(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(src);
+    X509_VERIFY_PARAM_set_depth(src.get(), 5);
+    ASSERT_TRUE(X509_VERIFY_PARAM_set1(dest.get(), src.get()));
+    EXPECT_EQ(X509_VERIFY_PARAM_get_depth(dest.get()), 5);
+  }
+
+  // |X509_VERIFY_PARAM_set1| with destination set.
+  {
+    bssl::UniquePtr<X509_VERIFY_PARAM> dest(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(dest);
+    bssl::UniquePtr<X509_VERIFY_PARAM> src(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(src);
+    X509_VERIFY_PARAM_set_depth(dest.get(), 5);
+    ASSERT_TRUE(X509_VERIFY_PARAM_set1(dest.get(), src.get()));
+    EXPECT_EQ(X509_VERIFY_PARAM_get_depth(dest.get()), 5);
+  }
+
+  // |X509_VERIFY_PARAM_set1| with both set.
+  {
+    bssl::UniquePtr<X509_VERIFY_PARAM> dest(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(dest);
+    bssl::UniquePtr<X509_VERIFY_PARAM> src(X509_VERIFY_PARAM_new());
+    ASSERT_TRUE(src);
+    X509_VERIFY_PARAM_set_depth(dest.get(), 5);
+    X509_VERIFY_PARAM_set_depth(src.get(), 10);
+    ASSERT_TRUE(X509_VERIFY_PARAM_set1(dest.get(), src.get()));
+    // The new value is used.
+    EXPECT_EQ(X509_VERIFY_PARAM_get_depth(dest.get()), 10);
   }
 }

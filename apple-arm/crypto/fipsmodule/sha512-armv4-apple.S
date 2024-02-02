@@ -63,7 +63,6 @@
 # define VFP_ABI_PUSH	vstmdb	sp!,{d8-d15}
 # define VFP_ABI_POP	vldmia	sp!,{d8-d15}
 #else
-# define __ARM_ARCH__ __LINUX_ARM_ARCH__
 # define __ARM_MAX_ARCH__ 7
 # define VFP_ABI_PUSH
 # define VFP_ABI_POP
@@ -136,38 +135,16 @@ K512:
 	WORD64(0x4cc5d4be,0xcb3e42b6,	0x597f299c,0xfc657e2a)
 	WORD64(0x5fcb6fab,0x3ad6faec,	0x6c44198c,0x4a475817)
 
-#if __ARM_MAX_ARCH__>=7 && !defined(__KERNEL__)
-LOPENSSL_armcap:
-.word	OPENSSL_armcap_P-Lsha512_block_data_order
-.skip	32-4
-#else
-.skip	32
-#endif
 
-.globl	_sha512_block_data_order
-.private_extern	_sha512_block_data_order
+.globl	_sha512_block_data_order_nohw
+.private_extern	_sha512_block_data_order_nohw
 #ifdef __thumb2__
-.thumb_func	_sha512_block_data_order
+.thumb_func	_sha512_block_data_order_nohw
 #endif
-_sha512_block_data_order:
-Lsha512_block_data_order:
-#if __ARM_ARCH__<7 && !defined(__thumb2__)
-	sub	r3,pc,#8		@ _sha512_block_data_order
-#else
-	adr	r3,Lsha512_block_data_order
-#endif
-#if __ARM_MAX_ARCH__>=7 && !defined(__KERNEL__)
-	ldr	r12,LOPENSSL_armcap
-	ldr	r12,[r3,r12]		@ OPENSSL_armcap_P
-#ifdef	__APPLE__
-	ldr	r12,[r12]
-#endif
-	tst	r12,#ARMV7_NEON
-	bne	LNEON
-#endif
+_sha512_block_data_order_nohw:
 	add	r2,r1,r2,lsl#7	@ len to point at the end of inp
 	stmdb	sp!,{r4,r5,r6,r7,r8,r9,r10,r11,r12,lr}
-	sub	r14,r3,#672		@ K512
+	adr	r14,K512
 	sub	sp,sp,#9*8
 
 	ldr	r7,[r0,#32+LO]
@@ -201,7 +178,7 @@ Loop:
 	str	r4,[sp,#40+4]
 
 L00_15:
-#if __ARM_ARCH__<7
+#if __ARM_ARCH<7
 	ldrb	r3,[r1,#7]
 	ldrb	r9, [r1,#6]
 	ldrb	r10, [r1,#5]
@@ -278,7 +255,7 @@ L00_15:
 	teq	r9,#148
 
 	ldr	r12,[sp,#16+0]	@ c.lo
-#if __ARM_ARCH__>=7
+#if __ARM_ARCH>=7
 	it	eq			@ Thumb2 thing, sanity check in ARM
 #endif
 	orreq	r14,r14,#1
@@ -418,7 +395,7 @@ L16_79:
 	teq	r9,#23
 
 	ldr	r12,[sp,#16+0]	@ c.lo
-#if __ARM_ARCH__>=7
+#if __ARM_ARCH>=7
 	it	eq			@ Thumb2 thing, sanity check in ARM
 #endif
 	orreq	r14,r14,#1
@@ -455,7 +432,7 @@ L16_79:
 	adc	r6,r6,r4		@ h += T
 	tst	r14,#1
 	add	r14,r14,#8
-#if __ARM_ARCH__>=7
+#if __ARM_ARCH>=7
 	ittt	eq			@ Thumb2 thing, sanity check in ARM
 #endif
 	ldreq	r9,[sp,#184+0]
@@ -534,7 +511,7 @@ L16_79:
 	bne	Loop
 
 	add	sp,sp,#8*9		@ destroy frame
-#if __ARM_ARCH__>=5
+#if __ARM_ARCH>=5
 	ldmia	sp!,{r4,r5,r6,r7,r8,r9,r10,r11,r12,pc}
 #else
 	ldmia	sp!,{r4,r5,r6,r7,r8,r9,r10,r11,r12,lr}
@@ -554,7 +531,6 @@ L16_79:
 #endif
 .align	4
 _sha512_block_data_order_neon:
-LNEON:
 	dmb	@ errata #451034 on early Cortex A8
 	add	r2,r1,r2,lsl#7	@ len to point at the end of inp
 	adr	r3,K512
@@ -1880,12 +1856,4 @@ L16_79_neon:
 .byte	83,72,65,53,49,50,32,98,108,111,99,107,32,116,114,97,110,115,102,111,114,109,32,102,111,114,32,65,82,77,118,52,47,78,69,79,78,44,32,67,82,89,80,84,79,71,65,77,83,32,98,121,32,60,97,112,112,114,111,64,111,112,101,110,115,115,108,46,111,114,103,62,0
 .align	2
 .align	2
-#if __ARM_MAX_ARCH__>=7 && !defined(__KERNEL__)
-.comm	_OPENSSL_armcap_P,4
-.non_lazy_symbol_pointer
-OPENSSL_armcap_P:
-.indirect_symbol	_OPENSSL_armcap_P
-.long	0
-.private_extern	_OPENSSL_armcap_P
-#endif
 #endif  // !OPENSSL_NO_ASM && defined(OPENSSL_ARM) && defined(__APPLE__)
