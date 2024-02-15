@@ -198,7 +198,7 @@ $code.=<<___;
 .long	1,0,0,0
 #if __ARM_MAX_ARCH__>=7
 .LOPENSSL_armcap:
-.word   OPENSSL_armcap_P-.LChaCha20_ctr32
+.word   OPENSSL_armcap_P-.Lsigma
 #else
 .word	-1
 #endif
@@ -210,11 +210,7 @@ ChaCha20_ctr32:
 .LChaCha20_ctr32:
 	ldr	r12,[sp,#0]		@ pull pointer to counter and nonce
 	stmdb	sp!,{r0-r2,r4-r11,lr}
-#if __ARM_ARCH__<7 && !defined(__thumb2__)
-	sub	r14,pc,#16		@ ChaCha20_ctr32
-#else
-	adr	r14,.LChaCha20_ctr32
-#endif
+	adr	r14,.Lsigma
 	cmp	r2,#0			@ len==0?
 #ifdef	__thumb2__
 	itt	eq
@@ -224,7 +220,7 @@ ChaCha20_ctr32:
 #if __ARM_MAX_ARCH__>=7
 	cmp	r2,#192			@ test len
 	bls	.Lshort
-	ldr	r4,[r14,#-32]
+	ldr	r4,[r14,#32]
 	ldr	r4,[r14,r4]
 # ifdef	__APPLE__
 	ldr	r4,[r4]
@@ -235,7 +231,6 @@ ChaCha20_ctr32:
 #endif
 	ldmia	r12,{r4-r7}		@ load counter and nonce
 	sub	sp,sp,#4*(16)		@ off-load area
-	sub	r14,r14,#64		@ .Lsigma
 	stmdb	sp!,{r4-r7}		@ copy counter and nonce
 	ldmia	r3,{r4-r11}		@ load key
 	ldmia	r14,{r0-r3}		@ load sigma
@@ -292,8 +287,8 @@ $code.=<<___;
 	ldr	@t[0],[sp,#4*(0)]	@ load key material
 	ldr	@t[1],[sp,#4*(1)]
 
-#if __ARM_ARCH__>=6 || !defined(__ARMEB__)
-# if __ARM_ARCH__<7
+#if __ARM_ARCH>=6 || !defined(__ARMEB__)
+# if __ARM_ARCH<7
 	orr	@t[2],r12,r14
 	tst	@t[2],#3		@ are input and output aligned?
 	ldr	@t[2],[sp,#4*(2)]
@@ -319,7 +314,7 @@ $code.=<<___;
 # endif
 	ldrhs	@t[2],[r12,#-8]
 	ldrhs	@t[3],[r12,#-4]
-# if __ARM_ARCH__>=6 && defined(__ARMEB__)
+# if __ARM_ARCH>=6 && defined(__ARMEB__)
 	rev	@x[0],@x[0]
 	rev	@x[1],@x[1]
 	rev	@x[2],@x[2]
@@ -356,7 +351,7 @@ $code.=<<___;
 # endif
 	ldrhs	@t[2],[r12,#-8]
 	ldrhs	@t[3],[r12,#-4]
-# if __ARM_ARCH__>=6 && defined(__ARMEB__)
+# if __ARM_ARCH>=6 && defined(__ARMEB__)
 	rev	@x[4],@x[4]
 	rev	@x[5],@x[5]
 	rev	@x[6],@x[6]
@@ -401,7 +396,7 @@ $code.=<<___;
 # endif
 	ldrhs	@t[2],[r12,#-8]
 	ldrhs	@t[3],[r12,#-4]
-# if __ARM_ARCH__>=6 && defined(__ARMEB__)
+# if __ARM_ARCH>=6 && defined(__ARMEB__)
 	rev	@x[0],@x[0]
 	rev	@x[1],@x[1]
 	rev	@x[2],@x[2]
@@ -443,7 +438,7 @@ $code.=<<___;
 # endif
 	ldrhs	@t[2],[r12,#-8]
 	ldrhs	@t[3],[r12,#-4]
-# if __ARM_ARCH__>=6 && defined(__ARMEB__)
+# if __ARM_ARCH>=6 && defined(__ARMEB__)
 	rev	@x[4],@x[4]
 	rev	@x[5],@x[5]
 	rev	@x[6],@x[6]
@@ -474,7 +469,7 @@ $code.=<<___;
 	bhi	.Loop_outer
 
 	beq	.Ldone
-# if __ARM_ARCH__<7
+# if __ARM_ARCH<7
 	b	.Ltail
 
 .align	4
@@ -482,7 +477,7 @@ $code.=<<___;
 	cmp	@t[3],#64		@ restore flags
 # endif
 #endif
-#if __ARM_ARCH__<7
+#if __ARM_ARCH<7
 	ldr	@t[3],[sp,#4*(3)]
 ___
 for ($i=0;$i<16;$i+=4) {
