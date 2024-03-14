@@ -185,6 +185,7 @@ cc_object {
         "com.android.compos",
         "com.android.conscrypt",
         "com.android.extservices",
+        "com.android.ondevicepersonalization",
         "com.android.resolv",
         "com.android.virt",
     ],
@@ -293,6 +294,7 @@ cc_library {
         "com.android.conscrypt",
         "com.android.extservices",
         "com.android.resolv",
+        "com.android.ondevicepersonalization",
         "com.android.virt",
     ],
     min_sdk_version: "29",
@@ -376,6 +378,7 @@ cc_library_static {
         "//system/security/keystore/tests",
         "//system/security/provisioner",
         "//test/vts-testcase/security/avb",
+        "//vendor:__subpackages__",
     ],
     min_sdk_version: "29",
     apex_available: [
