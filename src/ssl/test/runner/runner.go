@@ -32,7 +32,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/big"
 	"net"
 	"os"
@@ -48,6 +47,7 @@ import (
 
 	"boringssl.googlesource.com/boringssl/ssl/test/runner/hpke"
 	"boringssl.googlesource.com/boringssl/util/testresult"
+	"golang.org/x/crypto/cryptobyte"
 )
 
 var (
@@ -66,6 +66,7 @@ var (
 	allowHintMismatch  = flag.String("allow-hint-mismatch", "", "Semicolon-separated patterns of tests where hints may mismatch")
 	numWorkersFlag     = flag.Int("num-workers", runtime.NumCPU(), "The number of workers to run in parallel.")
 	shimPath           = flag.String("shim-path", "../../../build/ssl/test/bssl_shim", "The location of the shim binary.")
+	shimExtraFlags     = flag.String("shim-extra-flags", "", "Semicolon-separated extra flags to pass to the shim binary on each invocation.")
 	handshakerPath     = flag.String("handshaker-path", "../../../build/ssl/test/handshaker", "The location of the handshaker binary.")
 	resourceDir        = flag.String("resource-dir", ".", "The directory in which to find certificate and key files.")
 	fuzzer             = flag.Bool("fuzzer", false, "If true, tests against a BoringSSL built in fuzzer mode.")
@@ -234,7 +235,7 @@ func initCertificates() {
 		*testCerts[i].cert = cert
 	}
 
-	channelIDPEMBlock, err := ioutil.ReadFile(path.Join(*resourceDir, channelIDKeyFile))
+	channelIDPEMBlock, err := os.ReadFile(path.Join(*resourceDir, channelIDKeyFile))
 	if err != nil {
 		panic(err)
 	}
@@ -294,7 +295,7 @@ type delegatedCredentialConfig struct {
 
 func loadRSAPrivateKey(filename string) (priv *rsa.PrivateKey, privPKCS8 []byte, err error) {
 	pemPath := path.Join(*resourceDir, filename)
-	pemBytes, err := ioutil.ReadFile(pemPath)
+	pemBytes, err := os.ReadFile(pemPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -553,6 +554,10 @@ type connectionExpectations struct {
 	// peerApplicationSettings are the expected application settings for the
 	// connection. If nil, no application settings are expected.
 	peerApplicationSettings []byte
+	// peerApplicationSettingsOld are the expected application settings for
+	// the connection that are to be sent by the peer using old codepoint.
+	// If nil, no application settings are expected.
+	peerApplicationSettingsOld []byte
 	// echAccepted is whether ECH should have been accepted on this connection.
 	echAccepted bool
 }
@@ -712,7 +717,7 @@ func appendTranscript(path string, data []byte) error {
 		return nil
 	}
 
-	settings, err := ioutil.ReadFile(path)
+	settings, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return err
@@ -723,7 +728,7 @@ func appendTranscript(path string, data []byte) error {
 	}
 
 	settings = append(settings, data...)
-	return ioutil.WriteFile(path, settings, 0644)
+	return os.WriteFile(path, settings, 0644)
 }
 
 // A timeoutConn implements an idle timeout on each Read and Write operation.
@@ -819,10 +824,10 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 				if err := os.MkdirAll(dir, 0755); err != nil {
 					return err
 				}
-				bb := newByteBuilder()
-				bb.addU24LengthPrefixed().addBytes(encodedInner)
-				bb.addBytes(outer)
-				return ioutil.WriteFile(filepath.Join(dir, name), bb.finish(), 0644)
+				bb := cryptobyte.NewBuilder(nil)
+				addUint24LengthPrefixedBytes(bb, encodedInner)
+				bb.AddBytes(outer)
+				return os.WriteFile(filepath.Join(dir, name), bb.BytesOrPanic(), 0644)
 			}
 		}
 
@@ -935,6 +940,17 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 		}
 	} else if connState.HasApplicationSettings {
 		return errors.New("application settings unexpectedly negotiated")
+	}
+
+	if expectations.peerApplicationSettingsOld != nil {
+		if !connState.HasApplicationSettingsOld {
+			return errors.New("old application settings should have been negotiated")
+		}
+		if !bytes.Equal(connState.PeerApplicationSettingsOld, expectations.peerApplicationSettingsOld) {
+			return fmt.Errorf("old peer application settings mismatch: got %q, wanted %q", connState.PeerApplicationSettingsOld, expectations.peerApplicationSettingsOld)
+		}
+	} else if connState.HasApplicationSettingsOld {
+		return errors.New("old application settings unexpectedly negotiated")
 	}
 
 	if p := connState.SRTPProtectionProfile; p != expectations.srtpProtectionProfile {
@@ -1091,7 +1107,7 @@ func doExchange(test *testCase, config *Config, conn net.Conn, isResume bool, tr
 			return fmt.Errorf("messageLen < 0 not supported for DTLS tests")
 		}
 		// Read until EOF.
-		_, err := io.Copy(ioutil.Discard, tlsConn)
+		_, err := io.Copy(io.Discard, tlsConn)
 		return err
 	}
 	if messageLen == 0 {
@@ -1248,37 +1264,44 @@ var (
 )
 
 type shimProcess struct {
-	cmd            *exec.Cmd
-	waitChan       chan error
-	listener       *net.TCPListener
+	cmd *exec.Cmd
+	// done is closed when the process has exited. At that point, childErr may be
+	// read for the result.
+	done           chan struct{}
+	childErr       error
+	listener       *shimListener
 	stdout, stderr bytes.Buffer
 }
 
 // newShimProcess starts a new shim with the specified executable, flags, and
 // environment. It internally creates a TCP listener and adds the the -port
 // flag.
-func newShimProcess(shimPath string, flags []string, env []string) (*shimProcess, error) {
-	shim := new(shimProcess)
-	var err error
-	shim.listener, err = net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv6loopback})
-	if err != nil {
-		shim.listener, err = net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IP{127, 0, 0, 1}})
-	}
+func newShimProcess(dispatcher *shimDispatcher, shimPath string, flags []string, env []string) (*shimProcess, error) {
+	listener, err := dispatcher.NewShim()
 	if err != nil {
 		return nil, err
 	}
 
-	flags = append([]string{"-port", strconv.Itoa(shim.listener.Addr().(*net.TCPAddr).Port)}, flags...)
+	shim := &shimProcess{listener: listener}
+	cmdFlags := []string{
+		"-port", strconv.Itoa(listener.Port()),
+		"-shim-id", strconv.FormatUint(listener.ShimID(), 10),
+	}
+	if listener.IsIPv6() {
+		cmdFlags = append(cmdFlags, "-ipv6")
+	}
+	cmdFlags = append(cmdFlags, flags...)
+
 	if *useValgrind {
-		shim.cmd = valgrindOf(false, shimPath, flags...)
+		shim.cmd = valgrindOf(false, shimPath, cmdFlags...)
 	} else if *useGDB {
-		shim.cmd = gdbOf(shimPath, flags...)
+		shim.cmd = gdbOf(shimPath, cmdFlags...)
 	} else if *useLLDB {
-		shim.cmd = lldbOf(shimPath, flags...)
+		shim.cmd = lldbOf(shimPath, cmdFlags...)
 	} else if *useRR {
-		shim.cmd = rrOf(shimPath, flags...)
+		shim.cmd = rrOf(shimPath, cmdFlags...)
 	} else {
-		shim.cmd = exec.Command(shimPath, flags...)
+		shim.cmd = exec.Command(shimPath, cmdFlags...)
 	}
 	shim.cmd.Stdin = os.Stdin
 	shim.cmd.Stdout = &shim.stdout
@@ -1290,37 +1313,23 @@ func newShimProcess(shimPath string, flags []string, env []string) (*shimProcess
 		return nil, err
 	}
 
-	shim.waitChan = make(chan error, 1)
-	go func() { shim.waitChan <- shim.cmd.Wait() }()
+	shim.done = make(chan struct{})
+	go func() {
+		shim.childErr = shim.cmd.Wait()
+		shim.listener.Close()
+		close(shim.done)
+	}()
 	return shim, nil
 }
 
 // accept returns a new TCP connection with the shim process, or returns an
 // error on timeout or shim exit.
 func (s *shimProcess) accept() (net.Conn, error) {
-	type connOrError struct {
-		conn net.Conn
-		err  error
+	var deadline time.Time
+	if !useDebugger() {
+		deadline = time.Now().Add(*idleTimeout)
 	}
-	connChan := make(chan connOrError, 1)
-	go func() {
-		if !useDebugger() {
-			s.listener.SetDeadline(time.Now().Add(*idleTimeout))
-		}
-		conn, err := s.listener.Accept()
-		connChan <- connOrError{conn, err}
-		close(connChan)
-	}()
-	select {
-	case result := <-connChan:
-		return result.conn, result.err
-	case childErr := <-s.waitChan:
-		s.waitChan <- childErr
-		if childErr == nil {
-			return nil, fmt.Errorf("child exited early with no error")
-		}
-		return nil, fmt.Errorf("child exited early: %s", childErr)
-	}
+	return s.listener.Accept(deadline)
 }
 
 // wait finishes the test and waits for the shim process to exit.
@@ -1336,9 +1345,8 @@ func (s *shimProcess) wait() error {
 		defer waitTimeout.Stop()
 	}
 
-	err := <-s.waitChan
-	s.waitChan <- err
-	return err
+	<-s.done
+	return s.childErr
 }
 
 // close releases resources associated with the shimProcess. This is safe to
@@ -1424,7 +1432,7 @@ func translateExpectedError(errorStr string) string {
 // -shim-writes-first flag is used.
 const shimInitialWrite = "hello"
 
-func runTest(statusChan chan statusMsg, test *testCase, shimPath string, mallocNumToFail int64) error {
+func runTest(dispatcher *shimDispatcher, statusChan chan statusMsg, test *testCase, shimPath string, mallocNumToFail int64) error {
 	// Help debugging panics on the Go side.
 	defer func() {
 		if r := recover(); r != nil {
@@ -1434,6 +1442,9 @@ func runTest(statusChan chan statusMsg, test *testCase, shimPath string, mallocN
 	}()
 
 	var flags []string
+	if len(*shimExtraFlags) > 0 {
+		flags = strings.Split(*shimExtraFlags, ";")
+	}
 	if test.testType == serverTest {
 		flags = append(flags, "-server")
 
@@ -1632,7 +1643,7 @@ func runTest(statusChan chan statusMsg, test *testCase, shimPath string, mallocN
 		env = append(env, "_MALLOC_CHECK=1")
 	}
 
-	shim, err := newShimProcess(shimPath, flags, env)
+	shim, err := newShimProcess(dispatcher, shimPath, flags, env)
 	if err != nil {
 		return err
 	}
@@ -1840,6 +1851,7 @@ var testCipherSuites = []testCipherSuite{
 	{"ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256},
 	{"ECDHE_RSA_WITH_AES_128_GCM_SHA256", TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
 	{"ECDHE_RSA_WITH_AES_128_CBC_SHA", TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA},
+	{"ECDHE_RSA_WITH_AES_128_CBC_SHA256", TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256},
 	{"ECDHE_RSA_WITH_AES_256_GCM_SHA384", TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384},
 	{"ECDHE_RSA_WITH_AES_256_CBC_SHA", TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA},
 	{"ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256", TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256},
@@ -1851,7 +1863,6 @@ var testCipherSuites = []testCipherSuite{
 	{"CHACHA20_POLY1305_SHA256", TLS_CHACHA20_POLY1305_SHA256},
 	{"AES_128_GCM_SHA256", TLS_AES_128_GCM_SHA256},
 	{"AES_256_GCM_SHA384", TLS_AES_256_GCM_SHA384},
-	{"RSA_WITH_NULL_SHA", TLS_RSA_WITH_NULL_SHA},
 }
 
 func hasComponent(suiteName, component string) bool {
@@ -1879,7 +1890,12 @@ func bigFromHex(hex string) *big.Int {
 
 func convertToSplitHandshakeTests(tests []testCase) (splitHandshakeTests []testCase, err error) {
 	var stdout bytes.Buffer
-	shim := exec.Command(*shimPath, "-is-handshaker-supported")
+	var flags []string
+	if len(*shimExtraFlags) > 0 {
+		flags = strings.Split(*shimExtraFlags, ";")
+	}
+	flags = append(flags, "-is-handshaker-supported")
+	shim := exec.Command(*shimPath, flags...)
 	shim.Stdout = &stdout
 	if err := shim.Run(); err != nil {
 		return nil, err
@@ -3191,7 +3207,7 @@ read alert 1 0
 				// elliptic curves, so no extensions are
 				// involved.
 				MaxVersion:   VersionTLS12,
-				CipherSuites: []uint16{TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+				CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 				Bugs: ProtocolBugs{
 					SendV2ClientHello: true,
 				},
@@ -3213,7 +3229,7 @@ read alert 1 0
 				// elliptic curves, so no extensions are
 				// involved.
 				MaxVersion:   VersionTLS12,
-				CipherSuites: []uint16{TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+				CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 				Bugs: ProtocolBugs{
 					SendV2ClientHello: true,
 				},
@@ -3546,6 +3562,31 @@ read alert 1 0
 			},
 			flags: []string{"-async"},
 		},
+		{
+			// DTLS 1.2 allows up to a 255-byte HelloVerifyRequest cookie, which
+			// is the largest encodable value.
+			protocol: dtls,
+			name:     "DTLS-HelloVerifyRequest-255",
+			config: Config{
+				MaxVersion: VersionTLS12,
+				Bugs: ProtocolBugs{
+					HelloVerifyRequestCookieLength: 255,
+				},
+			},
+		},
+		{
+			// DTLS 1.2 allows up to a 0-byte HelloVerifyRequest cookie, which
+			// was probably a mistake in the spec but test that it works
+			// nonetheless.
+			protocol: dtls,
+			name:     "DTLS-HelloVerifyRequest-0",
+			config: Config{
+				MaxVersion: VersionTLS12,
+				Bugs: ProtocolBugs{
+					EmptyHelloVerifyRequestCookie: true,
+				},
+			},
+		},
 	}
 	testCases = append(testCases, basicTests...)
 
@@ -3649,9 +3690,10 @@ func addTestForCipherSuite(suite testCipherSuite, ver tlsVersion, protocol proto
 			"-psk", psk,
 			"-psk-identity", pskIdentity)
 	}
-	if hasComponent(suite.name, "NULL") {
-		// NULL ciphers must be explicitly enabled.
-		flags = append(flags, "-cipher", "DEFAULT:NULL-SHA")
+
+	if hasComponent(suite.name, "3DES") {
+		// BoringSSL disables 3DES ciphers by default.
+		flags = append(flags, "-cipher", "3DES")
 	}
 
 	var shouldFail bool
@@ -4201,6 +4243,8 @@ func addCBCSplittingTests() {
 				"-async",
 				"-write-different-record-sizes",
 				"-cbc-record-splitting",
+				// BoringSSL disables 3DES by default.
+				"-cipher", "ALL:3DES",
 			},
 		})
 		testCases = append(testCases, testCase{
@@ -4219,6 +4263,8 @@ func addCBCSplittingTests() {
 				"-write-different-record-sizes",
 				"-cbc-record-splitting",
 				"-partial-write",
+				// BoringSSL disables 3DES by default.
+				"-cipher", "ALL:3DES",
 			},
 		})
 	}
@@ -5742,7 +5788,7 @@ func addStateMachineCoverageTests(config stateMachineTestConfig) {
 					// elliptic curves, so no extensions are
 					// involved.
 					MaxVersion:   VersionTLS12,
-					CipherSuites: []uint16{TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+					CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 					Bugs: ProtocolBugs{
 						SendV2ClientHello:            true,
 						V2ClientHelloChallengeLength: challengeLength,
@@ -7150,598 +7196,809 @@ func addExtensionTests() {
 
 			// Test ALPS.
 			if ver.version >= VersionTLS13 {
-				// Test that client and server can negotiate ALPS, including
-				// different values on resumption.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           clientTest,
-					name:               "ALPS-Basic-Client-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner1")},
-					},
-					resumeConfig: &Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner2")},
-					},
-					resumeSession: true,
-					expectations: connectionExpectations{
-						peerApplicationSettings: []byte("shim1"),
-					},
-					resumeExpectations: &connectionExpectations{
-						peerApplicationSettings: []byte("shim2"),
-					},
-					flags: []string{
-						"-advertise-alpn", "\x05proto",
-						"-expect-alpn", "proto",
-						"-on-initial-application-settings", "proto,shim1",
-						"-on-initial-expect-peer-application-settings", "runner1",
-						"-on-resume-application-settings", "proto,shim2",
-						"-on-resume-expect-peer-application-settings", "runner2",
-					},
-				})
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           serverTest,
-					name:               "ALPS-Basic-Server-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner1")},
-					},
-					resumeConfig: &Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner2")},
-					},
-					resumeSession: true,
-					expectations: connectionExpectations{
-						peerApplicationSettings: []byte("shim1"),
-					},
-					resumeExpectations: &connectionExpectations{
-						peerApplicationSettings: []byte("shim2"),
-					},
-					flags: []string{
-						"-select-alpn", "proto",
-						"-on-initial-application-settings", "proto,shim1",
-						"-on-initial-expect-peer-application-settings", "runner1",
-						"-on-resume-application-settings", "proto,shim2",
-						"-on-resume-expect-peer-application-settings", "runner2",
-					},
-				})
-
-				// Test that the server can defer its ALPS configuration to the ALPN
-				// selection callback.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           serverTest,
-					name:               "ALPS-Basic-Server-Defer-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner1")},
-					},
-					resumeConfig: &Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner2")},
-					},
-					resumeSession: true,
-					expectations: connectionExpectations{
-						peerApplicationSettings: []byte("shim1"),
-					},
-					resumeExpectations: &connectionExpectations{
-						peerApplicationSettings: []byte("shim2"),
-					},
-					flags: []string{
-						"-select-alpn", "proto",
-						"-defer-alps",
-						"-on-initial-application-settings", "proto,shim1",
-						"-on-initial-expect-peer-application-settings", "runner1",
-						"-on-resume-application-settings", "proto,shim2",
-						"-on-resume-expect-peer-application-settings", "runner2",
-					},
-				})
-
-				// Test the client and server correctly handle empty settings.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           clientTest,
-					name:               "ALPS-Empty-Client-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte{}},
-					},
-					resumeSession: true,
-					expectations: connectionExpectations{
-						peerApplicationSettings: []byte{},
-					},
-					flags: []string{
-						"-advertise-alpn", "\x05proto",
-						"-expect-alpn", "proto",
-						"-application-settings", "proto,",
-						"-expect-peer-application-settings", "",
-					},
-				})
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           serverTest,
-					name:               "ALPS-Empty-Server-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte{}},
-					},
-					resumeSession: true,
-					expectations: connectionExpectations{
-						peerApplicationSettings: []byte{},
-					},
-					flags: []string{
-						"-select-alpn", "proto",
-						"-application-settings", "proto,",
-						"-expect-peer-application-settings", "",
-					},
-				})
-
-				// Test the client rejects application settings from the server on
-				// protocols it doesn't have them.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           clientTest,
-					name:               "ALPS-UnsupportedProtocol-Client-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto1"},
-						ApplicationSettings: map[string][]byte{"proto1": []byte("runner")},
-						Bugs: ProtocolBugs{
-							AlwaysNegotiateApplicationSettings: true,
-						},
-					},
-					// The client supports ALPS with "proto2", but not "proto1".
-					flags: []string{
-						"-advertise-alpn", "\x06proto1\x06proto2",
-						"-application-settings", "proto2,shim",
-						"-expect-alpn", "proto1",
-					},
-					// The server sends ALPS with "proto1", which is invalid.
-					shouldFail:         true,
-					expectedError:      ":INVALID_ALPN_PROTOCOL:",
-					expectedLocalError: "remote error: illegal parameter",
-				})
-
-				// Test the server declines ALPS if it doesn't support it for the
-				// specified protocol.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           serverTest,
-					name:               "ALPS-UnsupportedProtocol-Server-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto1"},
-						ApplicationSettings: map[string][]byte{"proto1": []byte("runner")},
-					},
-					// The server supports ALPS with "proto2", but not "proto1".
-					flags: []string{
-						"-select-alpn", "proto1",
-						"-application-settings", "proto2,shim",
-					},
-				})
-
-				// Test that the server rejects a missing application_settings extension.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           serverTest,
-					name:               "ALPS-OmitClientApplicationSettings-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
-						Bugs: ProtocolBugs{
-							OmitClientApplicationSettings: true,
-						},
-					},
-					flags: []string{
-						"-select-alpn", "proto",
-						"-application-settings", "proto,shim",
-					},
-					// The runner is a client, so it only processes the shim's alert
-					// after checking connection state.
-					expectations: connectionExpectations{
-						peerApplicationSettings: []byte("shim"),
-					},
-					shouldFail:         true,
-					expectedError:      ":MISSING_EXTENSION:",
-					expectedLocalError: "remote error: missing extension",
-				})
-
-				// Test that the server rejects a missing EncryptedExtensions message.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           serverTest,
-					name:               "ALPS-OmitClientEncryptedExtensions-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
-						Bugs: ProtocolBugs{
-							OmitClientEncryptedExtensions: true,
-						},
-					},
-					flags: []string{
-						"-select-alpn", "proto",
-						"-application-settings", "proto,shim",
-					},
-					// The runner is a client, so it only processes the shim's alert
-					// after checking connection state.
-					expectations: connectionExpectations{
-						peerApplicationSettings: []byte("shim"),
-					},
-					shouldFail:         true,
-					expectedError:      ":UNEXPECTED_MESSAGE:",
-					expectedLocalError: "remote error: unexpected message",
-				})
-
-				// Test that the server rejects an unexpected EncryptedExtensions message.
-				testCases = append(testCases, testCase{
-					protocol: protocol,
-					testType: serverTest,
-					name:     "UnexpectedClientEncryptedExtensions-" + suffix,
-					config: Config{
-						MaxVersion: ver.version,
-						Bugs: ProtocolBugs{
-							AlwaysSendClientEncryptedExtensions: true,
-						},
-					},
-					shouldFail:         true,
-					expectedError:      ":UNEXPECTED_MESSAGE:",
-					expectedLocalError: "remote error: unexpected message",
-				})
-
-				// Test that the server rejects an unexpected extension in an
-				// expected EncryptedExtensions message.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           serverTest,
-					name:               "ExtraClientEncryptedExtension-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"proto"},
-						ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
-						Bugs: ProtocolBugs{
-							SendExtraClientEncryptedExtension: true,
-						},
-					},
-					flags: []string{
-						"-select-alpn", "proto",
-						"-application-settings", "proto,shim",
-					},
-					// The runner is a client, so it only processes the shim's alert
-					// after checking connection state.
-					expectations: connectionExpectations{
-						peerApplicationSettings: []byte("shim"),
-					},
-					shouldFail:         true,
-					expectedError:      ":UNEXPECTED_EXTENSION:",
-					expectedLocalError: "remote error: unsupported extension",
-				})
-
-				// Test that ALPS is carried over on 0-RTT.
-				for _, empty := range []bool{false, true} {
-					maybeEmpty := ""
-					runnerSettings := "runner"
-					shimSettings := "shim"
-					if empty {
-						maybeEmpty = "Empty-"
-						runnerSettings = ""
-						shimSettings = ""
+				// Test basic client with different ALPS codepoint.
+				for _, alpsCodePoint := range []ALPSUseCodepoint{ALPSUseCodepointNew, ALPSUseCodepointOld} {
+					flags := []string{}
+					expectations := connectionExpectations{
+						peerApplicationSettingsOld: []byte("shim1"),
+					}
+					resumeExpectations := &connectionExpectations{
+						peerApplicationSettingsOld: []byte("shim2"),
 					}
 
+					if alpsCodePoint == ALPSUseCodepointNew {
+						flags = append(flags, "-alps-use-new-codepoint")
+						expectations = connectionExpectations{
+							peerApplicationSettings: []byte("shim1"),
+						}
+						resumeExpectations = &connectionExpectations{
+							peerApplicationSettings: []byte("shim2"),
+						}
+					}
+
+					flags = append(flags,
+						"-advertise-alpn", "\x05proto",
+						"-expect-alpn", "proto",
+						"-on-initial-application-settings", "proto,shim1",
+						"-on-initial-expect-peer-application-settings", "runner1",
+						"-on-resume-application-settings", "proto,shim2",
+						"-on-resume-expect-peer-application-settings", "runner2")
+
+					// Test that server can negotiate ALPS, including different values
+					// on resumption.
 					testCases = append(testCases, testCase{
 						protocol:           protocol,
 						testType:           clientTest,
-						name:               "ALPS-EarlyData-Client-" + maybeEmpty + suffix,
+						name:               fmt.Sprintf("ALPS-Basic-Client-%s-%s", alpsCodePoint, suffix),
 						skipQUICALPNConfig: true,
 						config: Config{
 							MaxVersion:          ver.version,
 							NextProtos:          []string{"proto"},
-							ApplicationSettings: map[string][]byte{"proto": []byte(runnerSettings)},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner1")},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeConfig: &Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner2")},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeSession:      true,
+						expectations:       expectations,
+						resumeExpectations: resumeExpectations,
+						flags:              flags,
+					})
+
+					// Test basic server with different ALPS codepoint.
+					flags = []string{}
+					expectations = connectionExpectations{
+						peerApplicationSettingsOld: []byte("shim1"),
+					}
+					resumeExpectations = &connectionExpectations{
+						peerApplicationSettingsOld: []byte("shim2"),
+					}
+
+					if alpsCodePoint == ALPSUseCodepointNew {
+						flags = append(flags, "-alps-use-new-codepoint")
+						expectations = connectionExpectations{
+							peerApplicationSettings: []byte("shim1"),
+						}
+						resumeExpectations = &connectionExpectations{
+							peerApplicationSettings: []byte("shim2"),
+						}
+					}
+
+					flags = append(flags,
+						"-select-alpn", "proto",
+						"-on-initial-application-settings", "proto,shim1",
+						"-on-initial-expect-peer-application-settings", "runner1",
+						"-on-resume-application-settings", "proto,shim2",
+						"-on-resume-expect-peer-application-settings", "runner2")
+
+					// Test that server can negotiate ALPS, including different values
+					// on resumption.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           serverTest,
+						name:               fmt.Sprintf("ALPS-Basic-Server-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner1")},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeConfig: &Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner2")},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeSession:      true,
+						expectations:       expectations,
+						resumeExpectations: resumeExpectations,
+						flags:              flags,
+					})
+
+					// Try different ALPS codepoint for all the existing tests.
+					alpsFlags := []string{}
+					expectations = connectionExpectations{
+						peerApplicationSettingsOld: []byte("shim1"),
+					}
+					resumeExpectations = &connectionExpectations{
+						peerApplicationSettingsOld: []byte("shim2"),
+					}
+					if alpsCodePoint == ALPSUseCodepointNew {
+						alpsFlags = append(alpsFlags, "-alps-use-new-codepoint")
+						expectations = connectionExpectations{
+							peerApplicationSettings: []byte("shim1"),
+						}
+						resumeExpectations = &connectionExpectations{
+							peerApplicationSettings: []byte("shim2"),
+						}
+					}
+
+					// Test that the server can defer its ALPS configuration to the ALPN
+					// selection callback.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           serverTest,
+						name:               fmt.Sprintf("ALPS-Basic-Server-Defer-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner1")},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeConfig: &Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner2")},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeSession:      true,
+						expectations:       expectations,
+						resumeExpectations: resumeExpectations,
+						flags: append([]string{
+							"-select-alpn", "proto",
+							"-defer-alps",
+							"-on-initial-application-settings", "proto,shim1",
+							"-on-initial-expect-peer-application-settings", "runner1",
+							"-on-resume-application-settings", "proto,shim2",
+							"-on-resume-expect-peer-application-settings", "runner2",
+						}, alpsFlags...),
+					})
+
+					expectations = connectionExpectations{
+						peerApplicationSettingsOld: []byte{},
+					}
+					if alpsCodePoint == ALPSUseCodepointNew {
+						expectations = connectionExpectations{
+							peerApplicationSettings: []byte{},
+						}
+					}
+					// Test the client and server correctly handle empty settings.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           clientTest,
+						name:               fmt.Sprintf("ALPS-Empty-Client-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte{}},
+							ALPSUseNewCodepoint: alpsCodePoint,
 						},
 						resumeSession: true,
-						earlyData:     true,
-						flags: []string{
+						expectations:  expectations,
+						flags: append([]string{
 							"-advertise-alpn", "\x05proto",
 							"-expect-alpn", "proto",
-							"-application-settings", "proto," + shimSettings,
-							"-expect-peer-application-settings", runnerSettings,
-						},
-						expectations: connectionExpectations{
-							peerApplicationSettings: []byte(shimSettings),
-						},
+							"-application-settings", "proto,",
+							"-expect-peer-application-settings", "",
+						}, alpsFlags...),
 					})
 					testCases = append(testCases, testCase{
 						protocol:           protocol,
 						testType:           serverTest,
-						name:               "ALPS-EarlyData-Server-" + maybeEmpty + suffix,
+						name:               fmt.Sprintf("ALPS-Empty-Server-%s-%s", alpsCodePoint, suffix),
 						skipQUICALPNConfig: true,
 						config: Config{
 							MaxVersion:          ver.version,
 							NextProtos:          []string{"proto"},
-							ApplicationSettings: map[string][]byte{"proto": []byte(runnerSettings)},
+							ApplicationSettings: map[string][]byte{"proto": []byte{}},
+							ALPSUseNewCodepoint: alpsCodePoint,
 						},
 						resumeSession: true,
-						earlyData:     true,
-						flags: []string{
+						expectations:  expectations,
+						flags: append([]string{
 							"-select-alpn", "proto",
-							"-application-settings", "proto," + shimSettings,
-							"-expect-peer-application-settings", runnerSettings,
-						},
-						expectations: connectionExpectations{
-							peerApplicationSettings: []byte(shimSettings),
-						},
+							"-application-settings", "proto,",
+							"-expect-peer-application-settings", "",
+						}, alpsFlags...),
 					})
 
-					// Sending application settings in 0-RTT handshakes is forbidden.
+					bugs := ProtocolBugs{
+						AlwaysNegotiateApplicationSettingsOld: true,
+					}
+					if alpsCodePoint == ALPSUseCodepointNew {
+						bugs = ProtocolBugs{
+							AlwaysNegotiateApplicationSettingsNew: true,
+						}
+					}
+					// Test the client rejects application settings from the server on
+					// protocols it doesn't have them.
 					testCases = append(testCases, testCase{
 						protocol:           protocol,
 						testType:           clientTest,
-						name:               "ALPS-EarlyData-SendApplicationSettingsWithEarlyData-Client-" + maybeEmpty + suffix,
+						name:               fmt.Sprintf("ALPS-UnsupportedProtocol-Client-%s-%s", alpsCodePoint, suffix),
 						skipQUICALPNConfig: true,
 						config: Config{
 							MaxVersion:          ver.version,
-							NextProtos:          []string{"proto"},
-							ApplicationSettings: map[string][]byte{"proto": []byte(runnerSettings)},
-							Bugs: ProtocolBugs{
-								SendApplicationSettingsWithEarlyData: true,
-							},
+							NextProtos:          []string{"proto1"},
+							ApplicationSettings: map[string][]byte{"proto1": []byte("runner")},
+							Bugs:                bugs,
+							ALPSUseNewCodepoint: alpsCodePoint,
 						},
-						resumeSession: true,
-						earlyData:     true,
-						flags: []string{
-							"-advertise-alpn", "\x05proto",
-							"-expect-alpn", "proto",
-							"-application-settings", "proto," + shimSettings,
-							"-expect-peer-application-settings", runnerSettings,
-						},
-						expectations: connectionExpectations{
-							peerApplicationSettings: []byte(shimSettings),
-						},
+						// The client supports ALPS with "proto2", but not "proto1".
+						flags: append([]string{
+							"-advertise-alpn", "\x06proto1\x06proto2",
+							"-application-settings", "proto2,shim",
+							"-expect-alpn", "proto1",
+						}, alpsFlags...),
+						// The server sends ALPS with "proto1", which is invalid.
 						shouldFail:         true,
-						expectedError:      ":UNEXPECTED_EXTENSION_ON_EARLY_DATA:",
+						expectedError:      ":INVALID_ALPN_PROTOCOL:",
 						expectedLocalError: "remote error: illegal parameter",
 					})
+
+					// Test client rejects application settings from the server when
+					// server sends the wrong ALPS codepoint.
+					bugs = ProtocolBugs{
+						AlwaysNegotiateApplicationSettingsOld: true,
+					}
+					if alpsCodePoint == ALPSUseCodepointOld {
+						bugs = ProtocolBugs{
+							AlwaysNegotiateApplicationSettingsNew: true,
+						}
+					}
+
 					testCases = append(testCases, testCase{
 						protocol:           protocol,
-						testType:           serverTest,
-						name:               "ALPS-EarlyData-SendApplicationSettingsWithEarlyData-Server-" + maybeEmpty + suffix,
+						testType:           clientTest,
+						name:               fmt.Sprintf("ALPS-WrongServerCodepoint-Client-%s-%s", alpsCodePoint, suffix),
 						skipQUICALPNConfig: true,
 						config: Config{
 							MaxVersion:          ver.version,
 							NextProtos:          []string{"proto"},
-							ApplicationSettings: map[string][]byte{"proto": []byte(runnerSettings)},
-							Bugs: ProtocolBugs{
-								SendApplicationSettingsWithEarlyData: true,
-							},
+							ApplicationSettings: map[string][]byte{"proto": []byte{}},
+							Bugs:                bugs,
+							ALPSUseNewCodepoint: alpsCodePoint,
 						},
-						resumeSession: true,
-						earlyData:     true,
-						flags: []string{
-							"-select-alpn", "proto",
-							"-application-settings", "proto," + shimSettings,
-							"-expect-peer-application-settings", runnerSettings,
-						},
-						expectations: connectionExpectations{
-							peerApplicationSettings: []byte(shimSettings),
-						},
+						flags: append([]string{
+							"-advertise-alpn", "\x05proto",
+							"-expect-alpn", "proto",
+							"-application-settings", "proto,",
+							"-expect-peer-application-settings", "",
+						}, alpsFlags...),
 						shouldFail:         true,
-						expectedError:      ":UNEXPECTED_MESSAGE:",
-						expectedLocalError: "remote error: unexpected message",
+						expectedError:      ":UNEXPECTED_EXTENSION:",
+						expectedLocalError: "remote error: unsupported extension",
 					})
-				}
 
-				// Test that the client and server each decline early data if local
-				// ALPS preferences has changed for the current connection.
-				alpsMismatchTests := []struct {
-					name                            string
-					initialSettings, resumeSettings []byte
-				}{
-					{"DifferentValues", []byte("settings1"), []byte("settings2")},
-					{"OnOff", []byte("settings"), nil},
-					{"OffOn", nil, []byte("settings")},
-					// The empty settings value should not be mistaken for ALPS not
-					// being negotiated.
-					{"OnEmpty", []byte("settings"), []byte{}},
-					{"EmptyOn", []byte{}, []byte("settings")},
-					{"EmptyOff", []byte{}, nil},
-					{"OffEmpty", nil, []byte{}},
-				}
-				for _, test := range alpsMismatchTests {
-					flags := []string{"-on-resume-expect-early-data-reason", "alps_mismatch"}
-					if test.initialSettings != nil {
-						flags = append(flags, "-on-initial-application-settings", "proto,"+string(test.initialSettings))
-						flags = append(flags, "-on-initial-expect-peer-application-settings", "runner")
-					}
-					if test.resumeSettings != nil {
-						flags = append(flags, "-on-resume-application-settings", "proto,"+string(test.resumeSettings))
-						flags = append(flags, "-on-resume-expect-peer-application-settings", "runner")
+					// Test server ignore wrong codepoint from client.
+					clientSends := ALPSUseCodepointNew
+					if alpsCodePoint == ALPSUseCodepointNew {
+						clientSends = ALPSUseCodepointOld
 					}
 
-					// The client should not offer early data if the session is
-					// inconsistent with the new configuration. Note that if
-					// the session did not negotiate ALPS (test.initialSettings
-					// is nil), the client always offers early data.
-					if test.initialSettings != nil {
-						testCases = append(testCases, testCase{
-							protocol:           protocol,
-							testType:           clientTest,
-							name:               fmt.Sprintf("ALPS-EarlyData-Mismatch-%s-Client-%s", test.name, suffix),
-							skipQUICALPNConfig: true,
-							config: Config{
-								MaxVersion:          ver.version,
-								MaxEarlyDataSize:    16384,
-								NextProtos:          []string{"proto"},
-								ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
-							},
-							resumeSession: true,
-							flags: append([]string{
-								"-enable-early-data",
-								"-expect-ticket-supports-early-data",
-								"-expect-no-offer-early-data",
-								"-advertise-alpn", "\x05proto",
-								"-expect-alpn", "proto",
-							}, flags...),
-							expectations: connectionExpectations{
-								peerApplicationSettings: test.initialSettings,
-							},
-							resumeExpectations: &connectionExpectations{
-								peerApplicationSettings: test.resumeSettings,
-							},
-						})
-					}
-
-					// The server should reject early data if the session is
-					// inconsistent with the new selection.
 					testCases = append(testCases, testCase{
 						protocol:           protocol,
 						testType:           serverTest,
-						name:               fmt.Sprintf("ALPS-EarlyData-Mismatch-%s-Server-%s", test.name, suffix),
+						name:               fmt.Sprintf("ALPS-IgnoreClientWrongCodepoint-Server-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner1")},
+							ALPSUseNewCodepoint: clientSends,
+						},
+						resumeConfig: &Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner2")},
+							ALPSUseNewCodepoint: clientSends,
+						},
+						resumeSession:      true,
+						flags: append([]string{
+							"-select-alpn", "proto",
+							"-on-initial-application-settings", "proto,shim1",
+							"-on-resume-application-settings", "proto,shim2",
+						}, alpsFlags...),
+					})
+
+					// Test the server declines ALPS if it doesn't support it for the
+					// specified protocol.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           serverTest,
+						name:               fmt.Sprintf("ALPS-UnsupportedProtocol-Server-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto1"},
+							ApplicationSettings: map[string][]byte{"proto1": []byte("runner")},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						// The server supports ALPS with "proto2", but not "proto1".
+						flags: append([]string{
+							"-select-alpn", "proto1",
+							"-application-settings", "proto2,shim",
+						}, alpsFlags...),
+					})
+
+					// Test the client rejects application settings from the server when
+					// it always negotiate both codepoint.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           clientTest,
+						name:               fmt.Sprintf("ALPS-UnsupportedProtocol-Client-ServerBoth-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto1"},
+							ApplicationSettings: map[string][]byte{"proto1": []byte("runner")},
+							Bugs: ProtocolBugs{
+								AlwaysNegotiateApplicationSettingsBoth: true,
+							},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						flags: append([]string{
+							"-advertise-alpn", "\x06proto1\x06proto2",
+							"-application-settings", "proto1,shim",
+							"-expect-alpn", "proto1",
+						}, alpsFlags...),
+						// The server sends ALPS with both application settings, which is invalid.
+						shouldFail:         true,
+						expectedError:      ":UNEXPECTED_EXTENSION:",
+						expectedLocalError: "remote error: unsupported extension",
+					})
+
+					expectations = connectionExpectations{
+						peerApplicationSettingsOld: []byte("shim"),
+					}
+					if alpsCodePoint == ALPSUseCodepointNew {
+						expectations = connectionExpectations{
+							peerApplicationSettings: []byte("shim"),
+						}
+					}
+
+					// Test that the server rejects a missing application_settings extension.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           serverTest,
+						name:               fmt.Sprintf("ALPS-OmitClientApplicationSettings-%s-%s", alpsCodePoint, suffix),
 						skipQUICALPNConfig: true,
 						config: Config{
 							MaxVersion:          ver.version,
 							NextProtos:          []string{"proto"},
 							ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
+							Bugs: ProtocolBugs{
+								OmitClientApplicationSettings: true,
+							},
+							ALPSUseNewCodepoint: alpsCodePoint,
 						},
-						resumeSession:           true,
-						earlyData:               true,
-						expectEarlyDataRejected: true,
 						flags: append([]string{
 							"-select-alpn", "proto",
-						}, flags...),
-						expectations: connectionExpectations{
-							peerApplicationSettings: test.initialSettings,
+							"-application-settings", "proto,shim",
+						}, alpsFlags...),
+						// The runner is a client, so it only processes the shim's alert
+						// after checking connection state.
+						expectations:       expectations,
+						shouldFail:         true,
+						expectedError:      ":MISSING_EXTENSION:",
+						expectedLocalError: "remote error: missing extension",
+					})
+
+					// Test that the server rejects a missing EncryptedExtensions message.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           serverTest,
+						name:               fmt.Sprintf("ALPS-OmitClientEncryptedExtensions-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
+							Bugs: ProtocolBugs{
+								OmitClientEncryptedExtensions: true,
+							},
+							ALPSUseNewCodepoint: alpsCodePoint,
 						},
-						resumeExpectations: &connectionExpectations{
-							peerApplicationSettings: test.resumeSettings,
+						flags: append([]string{
+							"-select-alpn", "proto",
+							"-application-settings", "proto,shim",
+						}, alpsFlags...),
+						// The runner is a client, so it only processes the shim's alert
+						// after checking connection state.
+						expectations:       expectations,
+						shouldFail:         true,
+						expectedError:      ":UNEXPECTED_MESSAGE:",
+						expectedLocalError: "remote error: unexpected message",
+					})
+
+					// Test that the server rejects an unexpected EncryptedExtensions message.
+					testCases = append(testCases, testCase{
+						protocol: protocol,
+						testType: serverTest,
+						name:     fmt.Sprintf("UnexpectedClientEncryptedExtensions-%s-%s", alpsCodePoint, suffix),
+						config: Config{
+							MaxVersion: ver.version,
+							Bugs: ProtocolBugs{
+								AlwaysSendClientEncryptedExtensions: true,
+							},
+							ALPSUseNewCodepoint: alpsCodePoint,
 						},
+						shouldFail:         true,
+						expectedError:      ":UNEXPECTED_MESSAGE:",
+						expectedLocalError: "remote error: unexpected message",
+					})
+
+					// Test that the server rejects an unexpected extension in an
+					// expected EncryptedExtensions message.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           serverTest,
+						name:               fmt.Sprintf("ExtraClientEncryptedExtension-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
+							Bugs: ProtocolBugs{
+								SendExtraClientEncryptedExtension: true,
+							},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						flags: append([]string{
+							"-select-alpn", "proto",
+							"-application-settings", "proto,shim",
+						}, alpsFlags...),
+						// The runner is a client, so it only processes the shim's alert
+						// after checking connection state.
+						expectations:       expectations,
+						shouldFail:         true,
+						expectedError:      ":UNEXPECTED_EXTENSION:",
+						expectedLocalError: "remote error: unsupported extension",
+					})
+
+					// Test that ALPS is carried over on 0-RTT.
+					for _, empty := range []bool{false, true} {
+						maybeEmpty := ""
+						runnerSettings := "runner"
+						shimSettings := "shim"
+						if empty {
+							maybeEmpty = "Empty-"
+							runnerSettings = ""
+							shimSettings = ""
+						}
+
+						expectations = connectionExpectations{
+							peerApplicationSettingsOld: []byte(shimSettings),
+						}
+						if alpsCodePoint == ALPSUseCodepointNew {
+							expectations = connectionExpectations{
+								peerApplicationSettings: []byte(shimSettings),
+							}
+						}
+						testCases = append(testCases, testCase{
+							protocol:           protocol,
+							testType:           clientTest,
+							name:               fmt.Sprintf("ALPS-EarlyData-Client-%s-%s-%s", alpsCodePoint, maybeEmpty, suffix),
+							skipQUICALPNConfig: true,
+							config: Config{
+								MaxVersion:          ver.version,
+								NextProtos:          []string{"proto"},
+								ApplicationSettings: map[string][]byte{"proto": []byte(runnerSettings)},
+								ALPSUseNewCodepoint: alpsCodePoint,
+							},
+							resumeSession: true,
+							earlyData:     true,
+							flags: append([]string{
+								"-advertise-alpn", "\x05proto",
+								"-expect-alpn", "proto",
+								"-application-settings", "proto," + shimSettings,
+								"-expect-peer-application-settings", runnerSettings,
+							}, alpsFlags...),
+							expectations: expectations,
+						})
+						testCases = append(testCases, testCase{
+							protocol:           protocol,
+							testType:           serverTest,
+							name:               fmt.Sprintf("ALPS-EarlyData-Server-%s-%s-%s", alpsCodePoint, maybeEmpty, suffix),
+							skipQUICALPNConfig: true,
+							config: Config{
+								MaxVersion:          ver.version,
+								NextProtos:          []string{"proto"},
+								ApplicationSettings: map[string][]byte{"proto": []byte(runnerSettings)},
+								ALPSUseNewCodepoint: alpsCodePoint,
+							},
+							resumeSession: true,
+							earlyData:     true,
+							flags: append([]string{
+								"-select-alpn", "proto",
+								"-application-settings", "proto," + shimSettings,
+								"-expect-peer-application-settings", runnerSettings,
+							}, alpsFlags...),
+							expectations: expectations,
+						})
+
+						// Sending application settings in 0-RTT handshakes is forbidden.
+						testCases = append(testCases, testCase{
+							protocol:           protocol,
+							testType:           clientTest,
+							name:               fmt.Sprintf("ALPS-EarlyData-SendApplicationSettingsWithEarlyData-Client-%s-%s-%s", alpsCodePoint, maybeEmpty, suffix),
+							skipQUICALPNConfig: true,
+							config: Config{
+								MaxVersion:          ver.version,
+								NextProtos:          []string{"proto"},
+								ApplicationSettings: map[string][]byte{"proto": []byte(runnerSettings)},
+								Bugs: ProtocolBugs{
+									SendApplicationSettingsWithEarlyData: true,
+								},
+								ALPSUseNewCodepoint: alpsCodePoint,
+							},
+							resumeSession: true,
+							earlyData:     true,
+							flags: append([]string{
+								"-advertise-alpn", "\x05proto",
+								"-expect-alpn", "proto",
+								"-application-settings", "proto," + shimSettings,
+								"-expect-peer-application-settings", runnerSettings,
+							}, alpsFlags...),
+							expectations:       expectations,
+							shouldFail:         true,
+							expectedError:      ":UNEXPECTED_EXTENSION_ON_EARLY_DATA:",
+							expectedLocalError: "remote error: illegal parameter",
+						})
+						testCases = append(testCases, testCase{
+							protocol:           protocol,
+							testType:           serverTest,
+							name:               fmt.Sprintf("ALPS-EarlyData-SendApplicationSettingsWithEarlyData-Server-%s-%s-%s", alpsCodePoint, maybeEmpty, suffix),
+							skipQUICALPNConfig: true,
+							config: Config{
+								MaxVersion:          ver.version,
+								NextProtos:          []string{"proto"},
+								ApplicationSettings: map[string][]byte{"proto": []byte(runnerSettings)},
+								Bugs: ProtocolBugs{
+									SendApplicationSettingsWithEarlyData: true,
+								},
+								ALPSUseNewCodepoint: alpsCodePoint,
+							},
+							resumeSession: true,
+							earlyData:     true,
+							flags: append([]string{
+								"-select-alpn", "proto",
+								"-application-settings", "proto," + shimSettings,
+								"-expect-peer-application-settings", runnerSettings,
+							}, alpsFlags...),
+							expectations:       expectations,
+							shouldFail:         true,
+							expectedError:      ":UNEXPECTED_MESSAGE:",
+							expectedLocalError: "remote error: unexpected message",
+						})
+					}
+
+					// Test that the client and server each decline early data if local
+					// ALPS preferences has changed for the current connection.
+					alpsMismatchTests := []struct {
+						name                            string
+						initialSettings, resumeSettings []byte
+					}{
+						{"DifferentValues", []byte("settings1"), []byte("settings2")},
+						{"OnOff", []byte("settings"), nil},
+						{"OffOn", nil, []byte("settings")},
+						// The empty settings value should not be mistaken for ALPS not
+						// being negotiated.
+						{"OnEmpty", []byte("settings"), []byte{}},
+						{"EmptyOn", []byte{}, []byte("settings")},
+						{"EmptyOff", []byte{}, nil},
+						{"OffEmpty", nil, []byte{}},
+					}
+					for _, test := range alpsMismatchTests {
+						flags := []string{"-on-resume-expect-early-data-reason", "alps_mismatch"}
+						flags = append(flags, alpsFlags...)
+						if test.initialSettings != nil {
+							flags = append(flags, "-on-initial-application-settings", "proto,"+string(test.initialSettings))
+							flags = append(flags, "-on-initial-expect-peer-application-settings", "runner")
+						}
+						if test.resumeSettings != nil {
+							flags = append(flags, "-on-resume-application-settings", "proto,"+string(test.resumeSettings))
+							flags = append(flags, "-on-resume-expect-peer-application-settings", "runner")
+						}
+
+						expectations = connectionExpectations{
+							peerApplicationSettingsOld: test.initialSettings,
+						}
+						resumeExpectations = &connectionExpectations{
+							peerApplicationSettingsOld: test.resumeSettings,
+						}
+						if alpsCodePoint == ALPSUseCodepointNew {
+							expectations = connectionExpectations{
+								peerApplicationSettings: test.initialSettings,
+							}
+							resumeExpectations = &connectionExpectations{
+								peerApplicationSettings: test.resumeSettings,
+							}
+						}
+						// The client should not offer early data if the session is
+						// inconsistent with the new configuration. Note that if
+						// the session did not negotiate ALPS (test.initialSettings
+						// is nil), the client always offers early data.
+						if test.initialSettings != nil {
+							testCases = append(testCases, testCase{
+								protocol:           protocol,
+								testType:           clientTest,
+								name:               fmt.Sprintf("ALPS-EarlyData-Mismatch-%s-Client-%s-%s", test.name, alpsCodePoint, suffix),
+								skipQUICALPNConfig: true,
+								config: Config{
+									MaxVersion:          ver.version,
+									MaxEarlyDataSize:    16384,
+									NextProtos:          []string{"proto"},
+									ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
+									ALPSUseNewCodepoint: alpsCodePoint,
+								},
+								resumeSession: true,
+								flags: append([]string{
+									"-enable-early-data",
+									"-expect-ticket-supports-early-data",
+									"-expect-no-offer-early-data",
+									"-advertise-alpn", "\x05proto",
+									"-expect-alpn", "proto",
+								}, flags...),
+								expectations:       expectations,
+								resumeExpectations: resumeExpectations,
+							})
+						}
+
+						// The server should reject early data if the session is
+						// inconsistent with the new selection.
+						testCases = append(testCases, testCase{
+							protocol:           protocol,
+							testType:           serverTest,
+							name:               fmt.Sprintf("ALPS-EarlyData-Mismatch-%s-Server-%s-%s", test.name, alpsCodePoint, suffix),
+							skipQUICALPNConfig: true,
+							config: Config{
+								MaxVersion:          ver.version,
+								NextProtos:          []string{"proto"},
+								ApplicationSettings: map[string][]byte{"proto": []byte("runner")},
+								ALPSUseNewCodepoint: alpsCodePoint,
+							},
+							resumeSession:           true,
+							earlyData:               true,
+							expectEarlyDataRejected: true,
+							flags: append([]string{
+								"-select-alpn", "proto",
+							}, flags...),
+							expectations:       expectations,
+							resumeExpectations: resumeExpectations,
+						})
+					}
+
+					// Test that 0-RTT continues working when the shim configures
+					// ALPS but the peer does not.
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           clientTest,
+						name:               fmt.Sprintf("ALPS-EarlyData-Client-ServerDecline-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeSession: true,
+						earlyData:     true,
+						flags: append([]string{
+							"-advertise-alpn", "\x05proto",
+							"-expect-alpn", "proto",
+							"-application-settings", "proto,shim",
+						}, alpsFlags...),
+					})
+					testCases = append(testCases, testCase{
+						protocol:           protocol,
+						testType:           serverTest,
+						name:               fmt.Sprintf("ALPS-EarlyData-Server-ClientNoOffe-%s-%s", alpsCodePoint, suffix),
+						skipQUICALPNConfig: true,
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"proto"},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeSession: true,
+						earlyData:     true,
+						flags: append([]string{
+							"-select-alpn", "proto",
+							"-application-settings", "proto,shim",
+						}, alpsFlags...),
 					})
 				}
-
-				// Test that 0-RTT continues working when the shim configures
-				// ALPS but the peer does not.
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           clientTest,
-					name:               "ALPS-EarlyData-Client-ServerDecline-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion: ver.version,
-						NextProtos: []string{"proto"},
-					},
-					resumeSession: true,
-					earlyData:     true,
-					flags: []string{
-						"-advertise-alpn", "\x05proto",
-						"-expect-alpn", "proto",
-						"-application-settings", "proto,shim",
-					},
-				})
-				testCases = append(testCases, testCase{
-					protocol:           protocol,
-					testType:           serverTest,
-					name:               "ALPS-EarlyData-Server-ClientNoOffer-" + suffix,
-					skipQUICALPNConfig: true,
-					config: Config{
-						MaxVersion: ver.version,
-						NextProtos: []string{"proto"},
-					},
-					resumeSession: true,
-					earlyData:     true,
-					flags: []string{
-						"-select-alpn", "proto",
-						"-application-settings", "proto,shim",
-					},
-				})
 			} else {
 				// Test the client rejects the ALPS extension if the server
 				// negotiated TLS 1.2 or below.
-				testCases = append(testCases, testCase{
-					protocol: protocol,
-					testType: clientTest,
-					name:     "ALPS-Reject-Client-" + suffix,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"foo"},
-						ApplicationSettings: map[string][]byte{"foo": []byte("runner")},
-						Bugs: ProtocolBugs{
-							AlwaysNegotiateApplicationSettings: true,
-						},
-					},
-					flags: []string{
+				for _, alpsCodePoint := range []ALPSUseCodepoint{ALPSUseCodepointNew, ALPSUseCodepointOld} {
+					flags := []string{
 						"-advertise-alpn", "\x03foo",
 						"-expect-alpn", "foo",
 						"-application-settings", "foo,shim",
-					},
-					shouldFail:         true,
-					expectedError:      ":UNEXPECTED_EXTENSION:",
-					expectedLocalError: "remote error: unsupported extension",
-				})
-				testCases = append(testCases, testCase{
-					protocol: protocol,
-					testType: clientTest,
-					name:     "ALPS-Reject-Client-Resume-" + suffix,
-					config: Config{
-						MaxVersion: ver.version,
-					},
-					resumeConfig: &Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"foo"},
-						ApplicationSettings: map[string][]byte{"foo": []byte("runner")},
-						Bugs: ProtocolBugs{
-							AlwaysNegotiateApplicationSettings: true,
+					}
+					bugs := ProtocolBugs{
+						AlwaysNegotiateApplicationSettingsOld: true,
+					}
+					if alpsCodePoint == ALPSUseCodepointNew {
+						flags = append(flags, "-alps-use-new-codepoint")
+						bugs = ProtocolBugs{
+							AlwaysNegotiateApplicationSettingsNew: true,
+						}
+					}
+					testCases = append(testCases, testCase{
+						protocol: protocol,
+						testType: clientTest,
+						name:     fmt.Sprintf("ALPS-Reject-Client-%s-%s", alpsCodePoint, suffix),
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"foo"},
+							ApplicationSettings: map[string][]byte{"foo": []byte("runner")},
+							Bugs:                bugs,
+							ALPSUseNewCodepoint: alpsCodePoint,
 						},
-					},
-					resumeSession: true,
-					flags: []string{
+						flags:              flags,
+						shouldFail:         true,
+						expectedError:      ":UNEXPECTED_EXTENSION:",
+						expectedLocalError: "remote error: unsupported extension",
+					})
+
+					flags = []string{
 						"-on-resume-advertise-alpn", "\x03foo",
 						"-on-resume-expect-alpn", "foo",
 						"-on-resume-application-settings", "foo,shim",
-					},
-					shouldFail:         true,
-					expectedError:      ":UNEXPECTED_EXTENSION:",
-					expectedLocalError: "remote error: unsupported extension",
-				})
+					}
+					bugs = ProtocolBugs{
+						AlwaysNegotiateApplicationSettingsOld: true,
+					}
+					if alpsCodePoint == ALPSUseCodepointNew {
+						flags = append(flags, "-alps-use-new-codepoint")
+						bugs = ProtocolBugs{
+							AlwaysNegotiateApplicationSettingsNew: true,
+						}
+					}
+					testCases = append(testCases, testCase{
+						protocol: protocol,
+						testType: clientTest,
+						name:     fmt.Sprintf("ALPS-Reject-Client-Resume-%s-%s", alpsCodePoint, suffix),
+						config: Config{
+							MaxVersion: ver.version,
+						},
+						resumeConfig: &Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"foo"},
+							ApplicationSettings: map[string][]byte{"foo": []byte("runner")},
+							Bugs:                bugs,
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						resumeSession:      true,
+						flags:              flags,
+						shouldFail:         true,
+						expectedError:      ":UNEXPECTED_EXTENSION:",
+						expectedLocalError: "remote error: unsupported extension",
+					})
 
-				// Test the server declines ALPS if it negotiates TLS 1.2 or below.
-				testCases = append(testCases, testCase{
-					protocol: protocol,
-					testType: serverTest,
-					name:     "ALPS-Decline-Server-" + suffix,
-					config: Config{
-						MaxVersion:          ver.version,
-						NextProtos:          []string{"foo"},
-						ApplicationSettings: map[string][]byte{"foo": []byte("runner")},
-					},
-					// Test both TLS 1.2 full and resumption handshakes.
-					resumeSession: true,
-					flags: []string{
+					// Test the server declines ALPS if it negotiates TLS 1.2 or below.
+					flags = []string{
 						"-select-alpn", "foo",
 						"-application-settings", "foo,shim",
-					},
-					// If not specified, runner and shim both implicitly expect ALPS
-					// is not negotiated.
-				})
+					}
+					if alpsCodePoint == ALPSUseCodepointNew {
+						flags = append(flags, "-alps-use-new-codepoint")
+					}
+					testCases = append(testCases, testCase{
+						protocol: protocol,
+						testType: serverTest,
+						name:     fmt.Sprintf("ALPS-Decline-Server-%s-%s", alpsCodePoint, suffix),
+						config: Config{
+							MaxVersion:          ver.version,
+							NextProtos:          []string{"foo"},
+							ApplicationSettings: map[string][]byte{"foo": []byte("runner")},
+							ALPSUseNewCodepoint: alpsCodePoint,
+						},
+						// Test both TLS 1.2 full and resumption handshakes.
+						resumeSession: true,
+						flags:         flags,
+						// If not specified, runner and shim both implicitly expect ALPS
+						// is not negotiated.
+					})
+				}
 			}
 
 			// Test QUIC transport params
@@ -8333,6 +8590,7 @@ func addExtensionTests() {
 					test.config.ApplicationSettings = map[string][]byte{"proto": []byte("runner")}
 					test.flags = append(test.flags,
 						"-application-settings", "proto,shim",
+						"-alps-use-new-codepoint",
 						"-expect-peer-application-settings", "runner")
 					test.expectations.peerApplicationSettings = []byte("shim")
 				}
@@ -9292,7 +9550,7 @@ func addRenegotiationTests() {
 		renegotiate: 1,
 		config: Config{
 			MaxVersion:   VersionTLS12,
-			CipherSuites: []uint16{TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+			CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 		},
 		renegotiateCiphers: []uint16{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
 		flags: []string{
@@ -9307,7 +9565,7 @@ func addRenegotiationTests() {
 			MaxVersion:   VersionTLS12,
 			CipherSuites: []uint16{TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256},
 		},
-		renegotiateCiphers: []uint16{TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+		renegotiateCiphers: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 		flags: []string{
 			"-renegotiate-freely",
 			"-expect-total-renegotiations", "1",
@@ -9696,26 +9954,29 @@ var testSignatureAlgorithms = []struct {
 	name string
 	id   signatureAlgorithm
 	cert testCert
+	// If non-zero, the curve that must be supported in TLS 1.2 for cert to be
+	// accepted.
+	curve CurveID
 }{
-	{"RSA_PKCS1_SHA1", signatureRSAPKCS1WithSHA1, testCertRSA},
-	{"RSA_PKCS1_SHA256", signatureRSAPKCS1WithSHA256, testCertRSA},
-	{"RSA_PKCS1_SHA384", signatureRSAPKCS1WithSHA384, testCertRSA},
-	{"RSA_PKCS1_SHA512", signatureRSAPKCS1WithSHA512, testCertRSA},
-	{"ECDSA_SHA1", signatureECDSAWithSHA1, testCertECDSAP256},
+	{"RSA_PKCS1_SHA1", signatureRSAPKCS1WithSHA1, testCertRSA, 0},
+	{"RSA_PKCS1_SHA256", signatureRSAPKCS1WithSHA256, testCertRSA, 0},
+	{"RSA_PKCS1_SHA384", signatureRSAPKCS1WithSHA384, testCertRSA, 0},
+	{"RSA_PKCS1_SHA512", signatureRSAPKCS1WithSHA512, testCertRSA, 0},
+	{"ECDSA_SHA1", signatureECDSAWithSHA1, testCertECDSAP256, CurveP256},
 	// The “P256” in the following line is not a mistake. In TLS 1.2 the
 	// hash function doesn't have to match the curve and so the same
 	// signature algorithm works with P-224.
-	{"ECDSA_P224_SHA256", signatureECDSAWithP256AndSHA256, testCertECDSAP224},
-	{"ECDSA_P256_SHA256", signatureECDSAWithP256AndSHA256, testCertECDSAP256},
-	{"ECDSA_P384_SHA384", signatureECDSAWithP384AndSHA384, testCertECDSAP384},
-	{"ECDSA_P521_SHA512", signatureECDSAWithP521AndSHA512, testCertECDSAP521},
-	{"RSA_PSS_SHA256", signatureRSAPSSWithSHA256, testCertRSA},
-	{"RSA_PSS_SHA384", signatureRSAPSSWithSHA384, testCertRSA},
-	{"RSA_PSS_SHA512", signatureRSAPSSWithSHA512, testCertRSA},
-	{"Ed25519", signatureEd25519, testCertEd25519},
+	{"ECDSA_P224_SHA256", signatureECDSAWithP256AndSHA256, testCertECDSAP224, CurveP224},
+	{"ECDSA_P256_SHA256", signatureECDSAWithP256AndSHA256, testCertECDSAP256, CurveP256},
+	{"ECDSA_P384_SHA384", signatureECDSAWithP384AndSHA384, testCertECDSAP384, CurveP384},
+	{"ECDSA_P521_SHA512", signatureECDSAWithP521AndSHA512, testCertECDSAP521, CurveP521},
+	{"RSA_PSS_SHA256", signatureRSAPSSWithSHA256, testCertRSA, 0},
+	{"RSA_PSS_SHA384", signatureRSAPSSWithSHA384, testCertRSA, 0},
+	{"RSA_PSS_SHA512", signatureRSAPSSWithSHA512, testCertRSA, 0},
+	{"Ed25519", signatureEd25519, testCertEd25519, 0},
 	// Tests for key types prior to TLS 1.2.
-	{"RSA", 0, testCertRSA},
-	{"ECDSA", 0, testCertECDSAP256},
+	{"RSA", 0, testCertRSA, 0},
+	{"ECDSA", 0, testCertECDSAP256, CurveP256},
 }
 
 const fakeSigAlg1 signatureAlgorithm = 0x2a01
@@ -9767,6 +10028,14 @@ func addSignatureAlgorithmTests() {
 				rejectByDefault = true
 			}
 
+			var curveFlags []string
+			if alg.curve != 0 && ver.version <= VersionTLS12 {
+				// In TLS 1.2, the ECDH curve list also constrains ECDSA keys. Ensure the
+				// corresponding curve is enabled on the shim. Also include X25519 to
+				// ensure the shim and runner have something in common for ECDH.
+				curveFlags = flagInts("-curves", []int{int(CurveX25519), int(alg.curve)})
+			}
+
 			var signError, signLocalError, verifyError, verifyLocalError, defaultError, defaultLocalError string
 			if shouldFail {
 				signError = ":NO_COMMON_SIGNATURE_ALGORITHMS:"
@@ -9805,7 +10074,7 @@ func addSignatureAlgorithmTests() {
 							"-cert-file", path.Join(*resourceDir, getShimCertificate(alg.cert)),
 							"-key-file", path.Join(*resourceDir, getShimKey(alg.cert)),
 						},
-						flagInts("-curves", shimConfig.AllCurves)...,
+						curveFlags...,
 					),
 					shouldFail:         shouldFail,
 					expectedError:      signError,
@@ -9828,13 +10097,15 @@ func addSignatureAlgorithmTests() {
 						[]string{
 							"-cert-file", path.Join(*resourceDir, getShimCertificate(alg.cert)),
 							"-key-file", path.Join(*resourceDir, getShimKey(alg.cert)),
-							"-signing-prefs", strconv.Itoa(int(alg.id)),
 						},
-						flagInts("-curves", shimConfig.AllCurves)...,
+						curveFlags...,
 					),
 					expectations: connectionExpectations{
 						peerSignatureAlgorithm: alg.id,
 					},
+				}
+				if alg.id != 0 {
+					negotiateTest.flags = append(negotiateTest.flags, "-signing-prefs", strconv.Itoa(int(alg.id)))
 				}
 
 				if testType == serverTest {
@@ -9868,20 +10139,18 @@ func addSignatureAlgorithmTests() {
 							IgnorePeerSignatureAlgorithmPreferences: shouldFail,
 						},
 					},
-					flags: append(
-						[]string{
-							"-expect-peer-signature-algorithm", strconv.Itoa(int(alg.id)),
-							// The algorithm may be disabled by default, so explicitly enable it.
-							"-verify-prefs", strconv.Itoa(int(alg.id)),
-						},
-						flagInts("-curves", shimConfig.AllCurves)...,
-					),
+					flags: curveFlags,
 					// Resume the session to assert the peer signature
 					// algorithm is reported on both handshakes.
 					resumeSession:      !shouldFail,
 					shouldFail:         shouldFail,
 					expectedError:      verifyError,
 					expectedLocalError: verifyLocalError,
+				}
+				if alg.id != 0 {
+					verifyTest.flags = append(verifyTest.flags, "-expect-peer-signature-algorithm", strconv.Itoa(int(alg.id)))
+					// The algorithm may be disabled by default, so explicitly enable it.
+					verifyTest.flags = append(verifyTest.flags, "-verify-prefs", strconv.Itoa(int(alg.id)))
 				}
 
 				// Test whether the shim expects the algorithm enabled by default.
@@ -9903,7 +10172,7 @@ func addSignatureAlgorithmTests() {
 					},
 					flags: append(
 						[]string{"-expect-peer-signature-algorithm", strconv.Itoa(int(alg.id))},
-						flagInts("-curves", shimConfig.AllCurves)...,
+						curveFlags...,
 					),
 					// Resume the session to assert the peer signature
 					// algorithm is reported on both handshakes.
@@ -9927,13 +10196,13 @@ func addSignatureAlgorithmTests() {
 							InvalidSignature: true,
 						},
 					},
-					flags: append(
-						// The algorithm may be disabled by default, so explicitly enable it.
-						[]string{"-verify-prefs", strconv.Itoa(int(alg.id))},
-						flagInts("-curves", shimConfig.AllCurves)...,
-					),
+					flags:         curveFlags,
 					shouldFail:    true,
 					expectedError: ":BAD_SIGNATURE:",
+				}
+				if alg.id != 0 {
+					// The algorithm may be disabled by default, so explicitly enable it.
+					invalidTest.flags = append(invalidTest.flags, "-verify-prefs", strconv.Itoa(int(alg.id)))
 				}
 
 				if testType == serverTest {
@@ -10453,10 +10722,8 @@ func addSignatureAlgorithmTests() {
 		flags: []string{
 			"-cert-file", path.Join(*resourceDir, rsaCertificateFile),
 			"-key-file", path.Join(*resourceDir, rsaKeyFile),
-			"-signing-prefs", strconv.Itoa(int(fakeSigAlg1)),
 			"-signing-prefs", strconv.Itoa(int(signatureECDSAWithP256AndSHA256)),
 			"-signing-prefs", strconv.Itoa(int(signatureRSAPKCS1WithSHA256)),
-			"-signing-prefs", strconv.Itoa(int(fakeSigAlg2)),
 		},
 		expectations: connectionExpectations{
 			peerSignatureAlgorithm: signatureRSAPKCS1WithSHA256,
@@ -10592,7 +10859,7 @@ func addSignatureAlgorithmTests() {
 			Certificates: []Certificate{ed25519Certificate},
 			Bugs: ProtocolBugs{
 				// Sign with Ed25519 even though it is TLS 1.1.
-				UseLegacySigningAlgorithm: signatureEd25519,
+				SigningAlgorithmForLegacyVersions: signatureEd25519,
 			},
 		},
 		flags:         []string{"-verify-prefs", strconv.Itoa(int(signatureEd25519))},
@@ -10620,7 +10887,7 @@ func addSignatureAlgorithmTests() {
 			Certificates: []Certificate{ed25519Certificate},
 			Bugs: ProtocolBugs{
 				// Sign with Ed25519 even though it is TLS 1.1.
-				UseLegacySigningAlgorithm: signatureEd25519,
+				SigningAlgorithmForLegacyVersions: signatureEd25519,
 			},
 		},
 		flags: []string{
@@ -10740,6 +11007,69 @@ func addSignatureAlgorithmTests() {
 			"-verify-prefs", strconv.Itoa(int(signatureEd25519)),
 		},
 	})
+
+	for _, testType := range []testType{clientTest, serverTest} {
+		for _, ver := range tlsVersions {
+			if ver.version < VersionTLS12 {
+				continue
+			}
+
+			prefix := "Client-" + ver.name + "-"
+			if testType == serverTest {
+				prefix = "Server-" + ver.name + "-"
+			}
+
+			// Test that the shim will not sign MD5/SHA1 with RSA at TLS 1.2,
+			// even if specified in signing preferences.
+			testCases = append(testCases, testCase{
+				testType: testType,
+				name:     prefix + "NoSign-RSA_PKCS1_MD5_SHA1",
+				config: Config{
+					MaxVersion:                ver.version,
+					CipherSuites:              signingCiphers,
+					ClientAuth:                RequireAnyClientCert,
+					VerifySignatureAlgorithms: []signatureAlgorithm{signatureRSAPKCS1WithMD5AndSHA1},
+				},
+				flags: []string{
+					"-cert-file", path.Join(*resourceDir, rsaCertificateFile),
+					"-key-file", path.Join(*resourceDir, rsaKeyFile),
+					"-signing-prefs", strconv.Itoa(int(signatureRSAPKCS1WithMD5AndSHA1)),
+					// Include a valid algorithm as well, to avoid an empty list
+					// if filtered out.
+					"-signing-prefs", strconv.Itoa(int(signatureRSAPKCS1WithSHA256)),
+				},
+				shouldFail:    true,
+				expectedError: ":NO_COMMON_SIGNATURE_ALGORITHMS:",
+			})
+
+			// Test that the shim will not accept MD5/SHA1 with RSA at TLS 1.2,
+			// even if specified in verify preferences.
+			testCases = append(testCases, testCase{
+				testType: testType,
+				name:     prefix + "NoVerify-RSA_PKCS1_MD5_SHA1",
+				config: Config{
+					MaxVersion:   ver.version,
+					Certificates: []Certificate{rsaCertificate},
+					Bugs: ProtocolBugs{
+						IgnorePeerSignatureAlgorithmPreferences: true,
+						AlwaysSignAsLegacyVersion:               true,
+						SendSignatureAlgorithm:                  signatureRSAPKCS1WithMD5AndSHA1,
+					},
+				},
+				flags: []string{
+					"-cert-file", path.Join(*resourceDir, rsaCertificateFile),
+					"-key-file", path.Join(*resourceDir, rsaKeyFile),
+					"-verify-prefs", strconv.Itoa(int(signatureRSAPKCS1WithMD5AndSHA1)),
+					// Include a valid algorithm as well, to avoid an empty list
+					// if filtered out.
+					"-verify-prefs", strconv.Itoa(int(signatureRSAPKCS1WithSHA256)),
+					"-require-any-client-certificate",
+				},
+				shouldFail:    true,
+				expectedError: ":WRONG_SIGNATURE_TYPE:",
+			})
+		}
+	}
 }
 
 // timeouts is the retransmit schedule for BoringSSL. It doubles and
@@ -11252,7 +11582,7 @@ func addRSAClientKeyExchangeTests() {
 				// version are different, to detect if the
 				// server uses the wrong one.
 				MaxVersion:   VersionTLS11,
-				CipherSuites: []uint16{TLS_RSA_WITH_3DES_EDE_CBC_SHA},
+				CipherSuites: []uint16{TLS_RSA_WITH_AES_128_CBC_SHA},
 				Bugs: ProtocolBugs{
 					BadRSAClientKeyExchange: bad,
 				},
@@ -11286,13 +11616,13 @@ var testCurves = []struct {
 	{"P-384", CurveP384},
 	{"P-521", CurveP521},
 	{"X25519", CurveX25519},
-	{"CECPQ2", CurveCECPQ2},
+	{"Kyber", CurveX25519Kyber768},
 }
 
 const bogusCurve = 0x1234
 
 func isPqGroup(r CurveID) bool {
-	return r == CurveCECPQ2
+	return r == CurveX25519Kyber768
 }
 
 func addCurveTests() {
@@ -11756,105 +12086,125 @@ func addCurveTests() {
 		},
 	})
 
-	// CECPQ2 should not be offered by a TLS < 1.3 client.
+	// Kyber should not be offered by a TLS < 1.3 client.
 	testCases = append(testCases, testCase{
-		name: "CECPQ2NotInTLS12",
+		name: "KyberNotInTLS12",
 		config: Config{
 			Bugs: ProtocolBugs{
-				FailIfCECPQ2Offered: true,
+				FailIfKyberOffered: true,
 			},
 		},
 		flags: []string{
 			"-max-version", strconv.Itoa(VersionTLS12),
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
+			"-curves", strconv.Itoa(int(CurveX25519Kyber768)),
 			"-curves", strconv.Itoa(int(CurveX25519)),
 		},
 	})
 
-	// CECPQ2 should not crash a TLS < 1.3 client if the server mistakenly
+	// Kyber should not crash a TLS < 1.3 client if the server mistakenly
 	// selects it.
 	testCases = append(testCases, testCase{
-		name: "CECPQ2NotAcceptedByTLS12Client",
+		name: "KyberNotAcceptedByTLS12Client",
 		config: Config{
 			Bugs: ProtocolBugs{
-				SendCurve: CurveCECPQ2,
+				SendCurve: CurveX25519Kyber768,
 			},
 		},
 		flags: []string{
 			"-max-version", strconv.Itoa(VersionTLS12),
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
+			"-curves", strconv.Itoa(int(CurveX25519Kyber768)),
 			"-curves", strconv.Itoa(int(CurveX25519)),
 		},
 		shouldFail:    true,
 		expectedError: ":WRONG_CURVE:",
 	})
 
-	// CECPQ2 should not be offered by default as a client.
+	// Kyber should not be offered by default as a client.
 	testCases = append(testCases, testCase{
-		name: "CECPQ2NotEnabledByDefaultInClients",
+		name: "KyberNotEnabledByDefaultInClients",
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				FailIfCECPQ2Offered: true,
+				FailIfKyberOffered: true,
 			},
 		},
 	})
 
-	// If CECPQ2 is offered, both X25519 and CECPQ2 should have a key-share.
+	// If Kyber is offered, both X25519 and Kyber should have a key-share.
 	testCases = append(testCases, testCase{
-		name: "NotJustCECPQ2KeyShare",
+		name: "NotJustKyberKeyShare",
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				ExpectedKeyShares: []CurveID{CurveCECPQ2, CurveX25519},
+				ExpectedKeyShares: []CurveID{CurveX25519Kyber768, CurveX25519},
 			},
 		},
 		flags: []string{
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
+			"-curves", strconv.Itoa(int(CurveX25519Kyber768)),
 			"-curves", strconv.Itoa(int(CurveX25519)),
-			"-expect-curve-id", strconv.Itoa(int(CurveCECPQ2)),
+			// Cannot expect Kyber until we have a Go implementation of it.
+			// "-expect-curve-id", strconv.Itoa(int(CurveX25519Kyber768)),
 		},
 	})
 
-	// ... but only if CECPQ2 is listed first.
+	// ... and the other way around
 	testCases = append(testCases, testCase{
-		name: "CECPQ2KeyShareNotIncludedSecond",
+		name: "KyberKeyShareIncludedSecond",
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				ExpectedKeyShares: []CurveID{CurveX25519},
+				ExpectedKeyShares: []CurveID{CurveX25519, CurveX25519Kyber768},
 			},
 		},
 		flags: []string{
 			"-curves", strconv.Itoa(int(CurveX25519)),
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
+			"-curves", strconv.Itoa(int(CurveX25519Kyber768)),
 			"-expect-curve-id", strconv.Itoa(int(CurveX25519)),
 		},
 	})
 
-	// If CECPQ2 is the only configured curve, the key share is sent.
+	// ... and even if there's another curve in the middle because it's the
+	// first classical and first post-quantum "curves" that get key shares
+	// included.
 	testCases = append(testCases, testCase{
-		name: "JustConfiguringCECPQ2Works",
+		name: "KyberKeyShareIncludedThird",
 		config: Config{
 			MinVersion: VersionTLS13,
 			Bugs: ProtocolBugs{
-				ExpectedKeyShares: []CurveID{CurveCECPQ2},
+				ExpectedKeyShares: []CurveID{CurveX25519, CurveX25519Kyber768},
 			},
 		},
 		flags: []string{
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
-			"-expect-curve-id", strconv.Itoa(int(CurveCECPQ2)),
+			"-curves", strconv.Itoa(int(CurveX25519)),
+			"-curves", strconv.Itoa(int(CurveP256)),
+			"-curves", strconv.Itoa(int(CurveX25519Kyber768)),
+			"-expect-curve-id", strconv.Itoa(int(CurveX25519)),
 		},
 	})
 
-	// As a server, CECPQ2 is not yet supported by default.
+	// If Kyber is the only configured curve, the key share is sent.
+	testCases = append(testCases, testCase{
+		name: "JustConfiguringKyberWorks",
+		config: Config{
+			MinVersion: VersionTLS13,
+			Bugs: ProtocolBugs{
+				ExpectedKeyShares: []CurveID{CurveX25519Kyber768},
+			},
+		},
+		flags: []string{
+			"-curves", strconv.Itoa(int(CurveX25519Kyber768)),
+			"-expect-curve-id", strconv.Itoa(int(CurveX25519Kyber768)),
+		},
+	})
+
+	// As a server, Kyber is not yet supported by default.
 	testCases = append(testCases, testCase{
 		testType: serverTest,
-		name:     "CECPQ2NotEnabledByDefaultForAServer",
+		name:     "KyberNotEnabledByDefaultForAServer",
 		config: Config{
 			MinVersion:       VersionTLS13,
-			CurvePreferences: []CurveID{CurveCECPQ2, CurveX25519},
-			DefaultCurves:    []CurveID{CurveCECPQ2},
+			CurvePreferences: []CurveID{CurveX25519Kyber768, CurveX25519},
+			DefaultCurves:    []CurveID{CurveX25519Kyber768},
 		},
 		flags: []string{
 			"-server-preference",
@@ -15082,95 +15432,6 @@ func addTLS13CipherPreferenceTests() {
 			"-expect-cipher-no-aes", strconv.Itoa(int(TLS_CHACHA20_POLY1305_SHA256)),
 		},
 	})
-
-	// CECPQ2 prefers 256-bit ciphers but will use AES-128 if there's nothing else.
-	testCases = append(testCases, testCase{
-		testType: serverTest,
-		name:     "TLS13-CipherPreference-CECPQ2-AES128Only",
-		config: Config{
-			MaxVersion: VersionTLS13,
-			CipherSuites: []uint16{
-				TLS_AES_128_GCM_SHA256,
-			},
-		},
-		flags: []string{
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
-		},
-	})
-
-	// When a 256-bit cipher is offered, even if not in first place, it should be
-	// picked.
-	testCases = append(testCases, testCase{
-		testType: serverTest,
-		name:     "TLS13-CipherPreference-CECPQ2-AES256Preferred",
-		config: Config{
-			MaxVersion: VersionTLS13,
-			CipherSuites: []uint16{
-				TLS_AES_128_GCM_SHA256,
-				TLS_AES_256_GCM_SHA384,
-			},
-		},
-		flags: []string{
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
-		},
-		expectations: connectionExpectations{
-			cipher: TLS_AES_256_GCM_SHA384,
-		},
-	})
-	// ... but when CECPQ2 isn't being used, the client's preference controls.
-	testCases = append(testCases, testCase{
-		testType: serverTest,
-		name:     "TLS13-CipherPreference-CECPQ2-AES128PreferredOtherwise",
-		config: Config{
-			MaxVersion: VersionTLS13,
-			CipherSuites: []uint16{
-				TLS_AES_128_GCM_SHA256,
-				TLS_AES_256_GCM_SHA384,
-			},
-		},
-		flags: []string{
-			"-curves", strconv.Itoa(int(CurveX25519)),
-		},
-		expectations: connectionExpectations{
-			cipher: TLS_AES_128_GCM_SHA256,
-		},
-	})
-
-	// Test that CECPQ2 continues to honor AES vs ChaCha20 logic.
-	testCases = append(testCases, testCase{
-		testType: serverTest,
-		name:     "TLS13-CipherPreference-CECPQ2-AES128-ChaCha20-AES256",
-		config: Config{
-			MaxVersion: VersionTLS13,
-			CipherSuites: []uint16{
-				TLS_AES_128_GCM_SHA256,
-				TLS_CHACHA20_POLY1305_SHA256,
-				TLS_AES_256_GCM_SHA384,
-			},
-		},
-		flags: []string{
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
-			"-expect-cipher-aes", strconv.Itoa(int(TLS_CHACHA20_POLY1305_SHA256)),
-			"-expect-cipher-no-aes", strconv.Itoa(int(TLS_CHACHA20_POLY1305_SHA256)),
-		},
-	})
-	testCases = append(testCases, testCase{
-		testType: serverTest,
-		name:     "TLS13-CipherPreference-CECPQ2-AES128-AES256-ChaCha20",
-		config: Config{
-			MaxVersion: VersionTLS13,
-			CipherSuites: []uint16{
-				TLS_AES_128_GCM_SHA256,
-				TLS_AES_256_GCM_SHA384,
-				TLS_CHACHA20_POLY1305_SHA256,
-			},
-		},
-		flags: []string{
-			"-curves", strconv.Itoa(int(CurveCECPQ2)),
-			"-expect-cipher-aes", strconv.Itoa(int(TLS_AES_256_GCM_SHA384)),
-			"-expect-cipher-no-aes", strconv.Itoa(int(TLS_CHACHA20_POLY1305_SHA256)),
-		},
-	})
 }
 
 func addPeekTests() {
@@ -15588,9 +15849,6 @@ func addRSAKeyUsageTests() {
 			},
 			shouldFail:    true,
 			expectedError: ":KEY_USAGE_BIT_INCORRECT:",
-			flags: []string{
-				"-enforce-rsa-key-usage",
-			},
 		})
 
 		testCases = append(testCases, testCase{
@@ -15601,9 +15859,6 @@ func addRSAKeyUsageTests() {
 				MaxVersion:   ver.version,
 				Certificates: []Certificate{dsCert},
 				CipherSuites: dsSuites,
-			},
-			flags: []string{
-				"-enforce-rsa-key-usage",
 			},
 		})
 
@@ -15618,9 +15873,6 @@ func addRSAKeyUsageTests() {
 					Certificates: []Certificate{encCert},
 					CipherSuites: encSuites,
 				},
-				flags: []string{
-					"-enforce-rsa-key-usage",
-				},
 			})
 
 			testCases = append(testCases, testCase{
@@ -15634,46 +15886,46 @@ func addRSAKeyUsageTests() {
 				},
 				shouldFail:    true,
 				expectedError: ":KEY_USAGE_BIT_INCORRECT:",
-				flags: []string{
-					"-enforce-rsa-key-usage",
-				},
 			})
 
 			// In 1.2 and below, we should not enforce without the enforce-rsa-key-usage flag.
 			testCases = append(testCases, testCase{
 				testType: clientTest,
-				name:     "RSAKeyUsage-Client-WantSignature-GotEncipherment-Unenforced" + ver.name,
+				name:     "RSAKeyUsage-Client-WantSignature-GotEncipherment-Unenforced-" + ver.name,
 				config: Config{
 					MinVersion:   ver.version,
 					MaxVersion:   ver.version,
 					Certificates: []Certificate{dsCert},
 					CipherSuites: encSuites,
 				},
+				flags: []string{"-expect-key-usage-invalid", "-ignore-rsa-key-usage"},
 			})
 
 			testCases = append(testCases, testCase{
 				testType: clientTest,
-				name:     "RSAKeyUsage-Client-WantEncipherment-GotSignature-Unenforced" + ver.name,
+				name:     "RSAKeyUsage-Client-WantEncipherment-GotSignature-Unenforced-" + ver.name,
 				config: Config{
 					MinVersion:   ver.version,
 					MaxVersion:   ver.version,
 					Certificates: []Certificate{encCert},
 					CipherSuites: dsSuites,
 				},
+				flags: []string{"-expect-key-usage-invalid", "-ignore-rsa-key-usage"},
 			})
 		}
 
 		if ver.version >= VersionTLS13 {
-			// In 1.3 and above, we enforce keyUsage even without the flag.
+			// In 1.3 and above, we enforce keyUsage even when disabled.
 			testCases = append(testCases, testCase{
 				testType: clientTest,
-				name:     "RSAKeyUsage-Client-WantSignature-GotEncipherment-Enforced" + ver.name,
+				name:     "RSAKeyUsage-Client-WantSignature-GotEncipherment-AlwaysEnforced-" + ver.name,
 				config: Config{
 					MinVersion:   ver.version,
 					MaxVersion:   ver.version,
 					Certificates: []Certificate{encCert},
 					CipherSuites: dsSuites,
 				},
+				flags:         []string{"-ignore-rsa-key-usage"},
 				shouldFail:    true,
 				expectedError: ":KEY_USAGE_BIT_INCORRECT:",
 			})
@@ -16364,7 +16616,7 @@ func addJDK11WorkaroundTests() {
 
 func addDelegatedCredentialTests() {
 	certPath := path.Join(*resourceDir, rsaCertificateFile)
-	pemBytes, err := ioutil.ReadFile(certPath)
+	pemBytes, err := os.ReadFile(certPath)
 	if err != nil {
 		panic(err)
 	}
@@ -18770,6 +19022,27 @@ func addHintMismatchTests() {
 				curveID: CurveX25519,
 			},
 		})
+		if protocol != quic {
+			testCases = append(testCases, testCase{
+				name:               protocol.String() + "-HintMismatch-ECDHE-Group",
+				testType:           serverTest,
+				protocol:           protocol,
+				skipSplitHandshake: true,
+				config: Config{
+					MinVersion:    VersionTLS12,
+					MaxVersion:    VersionTLS12,
+					DefaultCurves: []CurveID{CurveX25519, CurveP256},
+				},
+				flags: []string{
+					"-allow-hint-mismatch",
+					"-on-shim-curves", strconv.Itoa(int(CurveX25519)),
+					"-on-handshaker-curves", strconv.Itoa(int(CurveP256)),
+				},
+				expectations: connectionExpectations{
+					curveID: CurveX25519,
+				},
+			})
+		}
 
 		// If the handshaker does HelloRetryRequest, it will omit most hints.
 		// The shim should still work.
@@ -18818,7 +19091,7 @@ func addHintMismatchTests() {
 		// The shim and handshaker may have different signature algorithm
 		// preferences.
 		testCases = append(testCases, testCase{
-			name:               protocol.String() + "-HintMismatch-SignatureAlgorithm",
+			name:               protocol.String() + "-HintMismatch-SignatureAlgorithm-TLS13",
 			testType:           serverTest,
 			protocol:           protocol,
 			skipSplitHandshake: true,
@@ -18841,12 +19114,38 @@ func addHintMismatchTests() {
 				peerSignatureAlgorithm: signatureRSAPSSWithSHA256,
 			},
 		})
+		if protocol != quic {
+			testCases = append(testCases, testCase{
+				name:               protocol.String() + "-HintMismatch-SignatureAlgorithm-TLS12",
+				testType:           serverTest,
+				protocol:           protocol,
+				skipSplitHandshake: true,
+				config: Config{
+					MinVersion: VersionTLS12,
+					MaxVersion: VersionTLS12,
+					VerifySignatureAlgorithms: []signatureAlgorithm{
+						signatureRSAPSSWithSHA256,
+						signatureRSAPSSWithSHA384,
+					},
+				},
+				flags: []string{
+					"-allow-hint-mismatch",
+					"-cert-file", path.Join(*resourceDir, rsaCertificateFile),
+					"-key-file", path.Join(*resourceDir, rsaKeyFile),
+					"-on-shim-signing-prefs", strconv.Itoa(int(signatureRSAPSSWithSHA256)),
+					"-on-handshaker-signing-prefs", strconv.Itoa(int(signatureRSAPSSWithSHA384)),
+				},
+				expectations: connectionExpectations{
+					peerSignatureAlgorithm: signatureRSAPSSWithSHA256,
+				},
+			})
+		}
 
 		// The shim and handshaker may disagree on whether resumption is allowed.
 		// We run the first connection with tickets enabled, so the client is
 		// issued a ticket, then disable tickets on the second connection.
 		testCases = append(testCases, testCase{
-			name:               protocol.String() + "-HintMismatch-NoTickets1",
+			name:               protocol.String() + "-HintMismatch-NoTickets1-TLS13",
 			testType:           serverTest,
 			protocol:           protocol,
 			skipSplitHandshake: true,
@@ -18862,7 +19161,7 @@ func addHintMismatchTests() {
 			expectResumeRejected: true,
 		})
 		testCases = append(testCases, testCase{
-			name:               protocol.String() + "-HintMismatch-NoTickets2",
+			name:               protocol.String() + "-HintMismatch-NoTickets2-TLS13",
 			testType:           serverTest,
 			protocol:           protocol,
 			skipSplitHandshake: true,
@@ -18876,6 +19175,39 @@ func addHintMismatchTests() {
 			},
 			resumeSession: true,
 		})
+		if protocol != quic {
+			testCases = append(testCases, testCase{
+				name:               protocol.String() + "-HintMismatch-NoTickets1-TLS12",
+				testType:           serverTest,
+				protocol:           protocol,
+				skipSplitHandshake: true,
+				config: Config{
+					MinVersion: VersionTLS12,
+					MaxVersion: VersionTLS12,
+				},
+				flags: []string{
+					"-on-resume-allow-hint-mismatch",
+					"-on-shim-on-resume-no-ticket",
+				},
+				resumeSession:        true,
+				expectResumeRejected: true,
+			})
+			testCases = append(testCases, testCase{
+				name:               protocol.String() + "-HintMismatch-NoTickets2-TLS12",
+				testType:           serverTest,
+				protocol:           protocol,
+				skipSplitHandshake: true,
+				config: Config{
+					MinVersion: VersionTLS12,
+					MaxVersion: VersionTLS12,
+				},
+				flags: []string{
+					"-on-resume-allow-hint-mismatch",
+					"-on-handshaker-on-resume-no-ticket",
+				},
+				resumeSession: true,
+			})
+		}
 
 		// The shim and handshaker may disagree on whether to request a client
 		// certificate.
@@ -19029,10 +19361,300 @@ func addHintMismatchTests() {
 				ocspResponse: testOCSPResponse,
 			},
 		})
+
+		// The shim and handshaker may disagree on cipher suite, to the point
+		// that one selects RSA key exchange (no applicable hint) and the other
+		// selects ECDHE_RSA (hints are useful).
+		if protocol != quic {
+			testCases = append(testCases, testCase{
+				testType:           serverTest,
+				name:               protocol.String() + "-HintMismatch-CipherMismatch1",
+				protocol:           protocol,
+				skipSplitHandshake: true,
+				config: Config{
+					MinVersion: VersionTLS12,
+					MaxVersion: VersionTLS12,
+				},
+				flags: []string{
+					"-allow-hint-mismatch",
+					"-on-shim-cipher", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+					"-on-handshaker-cipher", "TLS_RSA_WITH_AES_128_GCM_SHA256",
+				},
+				expectations: connectionExpectations{
+					cipher: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				},
+			})
+			testCases = append(testCases, testCase{
+				testType:           serverTest,
+				name:               protocol.String() + "-HintMismatch-CipherMismatch2",
+				protocol:           protocol,
+				skipSplitHandshake: true,
+				config: Config{
+					MinVersion: VersionTLS12,
+					MaxVersion: VersionTLS12,
+				},
+				flags: []string{
+					// There is no need to pass -allow-hint-mismatch. The
+					// handshaker will unnecessarily generate a signature hints.
+					// This is not reported as a mismatch because hints would
+					// not have helped the shim anyway.
+					"-on-shim-cipher", "TLS_RSA_WITH_AES_128_GCM_SHA256",
+					"-on-handshaker-cipher", "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+				},
+				expectations: connectionExpectations{
+					cipher: TLS_RSA_WITH_AES_128_GCM_SHA256,
+				},
+			})
+		}
 	}
 }
 
-func worker(statusChan chan statusMsg, c chan *testCase, shimPath string, wg *sync.WaitGroup) {
+func addCompliancePolicyTests() {
+	for _, protocol := range []protocol{tls, quic} {
+		for _, suite := range testCipherSuites {
+			var isFIPSCipherSuite bool
+			switch suite.id {
+			case TLS_AES_128_GCM_SHA256,
+				TLS_AES_256_GCM_SHA384,
+				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+				TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+				TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256:
+				isFIPSCipherSuite = true
+			}
+
+			var isWPACipherSuite bool
+			switch suite.id {
+			case TLS_AES_256_GCM_SHA384,
+				TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+				TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384:
+				isWPACipherSuite = true
+			}
+
+			var certFile string
+			var keyFile string
+			var certs []Certificate
+			if hasComponent(suite.name, "ECDSA") {
+				certFile = ecdsaP384CertificateFile
+				keyFile = ecdsaP384KeyFile
+				certs = []Certificate{ecdsaP384Certificate}
+			} else {
+				certFile = rsaCertificateFile
+				keyFile = rsaKeyFile
+				certs = []Certificate{rsaCertificate}
+			}
+
+			maxVersion := uint16(VersionTLS13)
+			if !isTLS13Suite(suite.name) {
+				if protocol == quic {
+					continue
+				}
+				maxVersion = VersionTLS12
+			}
+
+			policies := []struct {
+				flag          string
+				cipherSuiteOk bool
+			}{
+				{"-fips-202205", isFIPSCipherSuite},
+				{"-wpa-202304", isWPACipherSuite},
+			}
+
+			for _, policy := range policies {
+				testCases = append(testCases, testCase{
+					testType: serverTest,
+					protocol: protocol,
+					name:     "Compliance" + policy.flag + "-" + protocol.String() + "-Server-" + suite.name,
+					config: Config{
+						MinVersion:   VersionTLS12,
+						MaxVersion:   maxVersion,
+						CipherSuites: []uint16{suite.id},
+					},
+					certFile: certFile,
+					keyFile:  keyFile,
+					flags: []string{
+						policy.flag,
+					},
+					shouldFail: !policy.cipherSuiteOk,
+				})
+
+				testCases = append(testCases, testCase{
+					testType: clientTest,
+					protocol: protocol,
+					name:     "Compliance" + policy.flag + "-" + protocol.String() + "-Client-" + suite.name,
+					config: Config{
+						MinVersion:   VersionTLS12,
+						MaxVersion:   maxVersion,
+						CipherSuites: []uint16{suite.id},
+						Certificates: certs,
+					},
+					flags: []string{
+						policy.flag,
+					},
+					shouldFail: !policy.cipherSuiteOk,
+				})
+			}
+		}
+
+		// Check that a TLS 1.3 client won't accept ChaCha20 even if the server
+		// picks it without it being in the client's cipher list.
+		testCases = append(testCases, testCase{
+			testType: clientTest,
+			protocol: protocol,
+			name:     "Compliance-fips202205-" + protocol.String() + "-Client-ReallyWontAcceptChaCha",
+			config: Config{
+				MinVersion: VersionTLS12,
+				MaxVersion: maxVersion,
+				Bugs: ProtocolBugs{
+					SendCipherSuite: TLS_CHACHA20_POLY1305_SHA256,
+				},
+			},
+			flags: []string{
+				"-fips-202205",
+			},
+			shouldFail:    true,
+			expectedError: ":WRONG_CIPHER_RETURNED:",
+		})
+
+		for _, curve := range testCurves {
+			var isFIPSCurve bool
+			switch curve.id {
+			case CurveP256, CurveP384:
+				isFIPSCurve = true
+			}
+
+			var isWPACurve bool
+			switch curve.id {
+			case CurveP384:
+				isWPACurve = true
+			}
+
+			policies := []struct {
+				flag    string
+				curveOk bool
+			}{
+				{"-fips-202205", isFIPSCurve},
+				{"-wpa-202304", isWPACurve},
+			}
+
+			for _, policy := range policies {
+				testCases = append(testCases, testCase{
+					testType: serverTest,
+					protocol: protocol,
+					name:     "Compliance" + policy.flag + "-" + protocol.String() + "-Server-" + curve.name,
+					config: Config{
+						MinVersion:       VersionTLS12,
+						MaxVersion:       VersionTLS13,
+						CurvePreferences: []CurveID{curve.id},
+					},
+					flags: []string{
+						policy.flag,
+					},
+					shouldFail: !policy.curveOk,
+				})
+
+				testCases = append(testCases, testCase{
+					testType: clientTest,
+					protocol: protocol,
+					name:     "Compliance" + policy.flag + "-" + protocol.String() + "-Client-" + curve.name,
+					config: Config{
+						MinVersion:       VersionTLS12,
+						MaxVersion:       VersionTLS13,
+						CurvePreferences: []CurveID{curve.id},
+					},
+					flags: []string{
+						policy.flag,
+					},
+					shouldFail: !policy.curveOk,
+				})
+			}
+		}
+
+		for _, sigalg := range testSignatureAlgorithms {
+			var isFIPSSigAlg bool
+			switch sigalg.id {
+			case signatureRSAPKCS1WithSHA256,
+				signatureRSAPKCS1WithSHA384,
+				signatureRSAPKCS1WithSHA512,
+				signatureECDSAWithP256AndSHA256,
+				signatureECDSAWithP384AndSHA384,
+				signatureRSAPSSWithSHA256,
+				signatureRSAPSSWithSHA384,
+				signatureRSAPSSWithSHA512:
+				isFIPSSigAlg = true
+			}
+
+			var isWPASigAlg bool
+			switch sigalg.id {
+			case signatureRSAPKCS1WithSHA384,
+				signatureRSAPKCS1WithSHA512,
+				signatureECDSAWithP384AndSHA384,
+				signatureRSAPSSWithSHA384,
+				signatureRSAPSSWithSHA512:
+				isWPASigAlg = true
+			}
+
+			if sigalg.cert == testCertECDSAP224 {
+				// This can work in TLS 1.2, but not with TLS 1.3.
+				// For consistency it's not permitted in FIPS mode.
+				isFIPSSigAlg = false
+			}
+
+			maxVersion := uint16(VersionTLS13)
+			if hasComponent(sigalg.name, "PKCS1") {
+				if protocol == quic {
+					continue
+				}
+				maxVersion = VersionTLS12
+			}
+
+			policies := []struct {
+				flag     string
+				sigAlgOk bool
+			}{
+				{"-fips-202205", isFIPSSigAlg},
+				{"-wpa-202304", isWPASigAlg},
+			}
+
+			for _, policy := range policies {
+				testCases = append(testCases, testCase{
+					testType: serverTest,
+					protocol: protocol,
+					name:     "Compliance" + policy.flag + "-" + protocol.String() + "-Server-" + sigalg.name,
+					config: Config{
+						MinVersion:                VersionTLS12,
+						MaxVersion:                maxVersion,
+						VerifySignatureAlgorithms: []signatureAlgorithm{sigalg.id},
+					},
+					flags: []string{
+						policy.flag,
+						"-cert-file", path.Join(*resourceDir, getShimCertificate(sigalg.cert)),
+						"-key-file", path.Join(*resourceDir, getShimKey(sigalg.cert)),
+					},
+					shouldFail: !policy.sigAlgOk,
+				})
+
+				testCases = append(testCases, testCase{
+					testType: clientTest,
+					protocol: protocol,
+					name:     "Compliance" + policy.flag + "-" + protocol.String() + "-Client-" + sigalg.name,
+					config: Config{
+						MinVersion:              VersionTLS12,
+						MaxVersion:              maxVersion,
+						SignSignatureAlgorithms: []signatureAlgorithm{sigalg.id},
+						Certificates:            []Certificate{getRunnerCertificate(sigalg.cert)},
+					},
+					flags: []string{
+						policy.flag,
+					},
+					shouldFail: !policy.sigAlgOk,
+				})
+			}
+		}
+	}
+}
+
+func worker(dispatcher *shimDispatcher, statusChan chan statusMsg, c chan *testCase, shimPath string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for test := range c {
@@ -19041,7 +19663,7 @@ func worker(statusChan chan statusMsg, c chan *testCase, shimPath string, wg *sy
 		if *mallocTest >= 0 {
 			for mallocNumToFail := int64(*mallocTest); ; mallocNumToFail++ {
 				statusChan <- statusMsg{test: test, statusType: statusStarted}
-				if err = runTest(statusChan, test, shimPath, mallocNumToFail); err != errMoreMallocs {
+				if err = runTest(dispatcher, statusChan, test, shimPath, mallocNumToFail); err != errMoreMallocs {
 					if err != nil {
 						fmt.Printf("\n\nmalloc test failed at %d: %s\n", mallocNumToFail, err)
 					}
@@ -19051,11 +19673,11 @@ func worker(statusChan chan statusMsg, c chan *testCase, shimPath string, wg *sy
 		} else if *repeatUntilFailure {
 			for err == nil {
 				statusChan <- statusMsg{test: test, statusType: statusStarted}
-				err = runTest(statusChan, test, shimPath, -1)
+				err = runTest(dispatcher, statusChan, test, shimPath, -1)
 			}
 		} else {
 			statusChan <- statusMsg{test: test, statusType: statusStarted}
-			err = runTest(statusChan, test, shimPath, -1)
+			err = runTest(dispatcher, statusChan, test, shimPath, -1)
 		}
 		statusChan <- statusMsg{test: test, statusType: statusDone, err: err}
 	}
@@ -19212,7 +19834,7 @@ func main() {
 	initCertificates()
 
 	if len(*shimConfigFile) != 0 {
-		encoded, err := ioutil.ReadFile(*shimConfigFile)
+		encoded, err := os.ReadFile(*shimConfigFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't read config file %q: %s\n", *shimConfigFile, err)
 			os.Exit(1)
@@ -19274,6 +19896,7 @@ func main() {
 	addDelegatedCredentialTests()
 	addEncryptedClientHelloTests()
 	addHintMismatchTests()
+	addCompliancePolicyTests()
 
 	toAppend, err := convertToSplitHandshakeTests(testCases)
 	if err != nil {
@@ -19283,6 +19906,13 @@ func main() {
 	testCases = append(testCases, toAppend...)
 
 	checkTests()
+
+	dispatcher, err := newShimDispatcher()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening socket: %s", err)
+		os.Exit(1)
+	}
+	defer dispatcher.Close()
 
 	numWorkers := *numWorkersFlag
 	if useDebugger() {
@@ -19298,7 +19928,7 @@ func main() {
 	var wg sync.WaitGroup
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go worker(statusChan, testChan, *shimPath, &wg)
+		go worker(dispatcher, statusChan, testChan, *shimPath, &wg)
 	}
 
 	var oneOfPatternIfAny, noneOfPattern []string
