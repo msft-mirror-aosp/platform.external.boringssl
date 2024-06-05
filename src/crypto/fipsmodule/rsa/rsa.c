@@ -83,15 +83,133 @@ OPENSSL_DECLARE_ERROR_REASON(RSA, BLOCK_TYPE_IS_NOT_02)
 
 DEFINE_STATIC_EX_DATA_CLASS(g_rsa_ex_data_class)
 
-RSA *RSA_new(void) { return RSA_new_method(NULL); }
+static int bn_dup_into(BIGNUM **dst, const BIGNUM *src) {
+  if (src == NULL) {
+    OPENSSL_PUT_ERROR(RSA, ERR_R_PASSED_NULL_PARAMETER);
+    return 0;
+  }
 
-RSA *RSA_new_method(const ENGINE *engine) {
-  RSA *rsa = OPENSSL_malloc(sizeof(RSA));
+  BN_free(*dst);
+  *dst = BN_dup(src);
+  return *dst != NULL;
+}
+
+RSA *RSA_new_public_key(const BIGNUM *n, const BIGNUM *e) {
+  RSA *rsa = RSA_new();
+  if (rsa == NULL ||               //
+      !bn_dup_into(&rsa->n, n) ||  //
+      !bn_dup_into(&rsa->e, e) ||  //
+      !RSA_check_key(rsa)) {
+    RSA_free(rsa);
+    return NULL;
+  }
+
+  return rsa;
+}
+
+RSA *RSA_new_private_key(const BIGNUM *n, const BIGNUM *e, const BIGNUM *d,
+                         const BIGNUM *p, const BIGNUM *q, const BIGNUM *dmp1,
+                         const BIGNUM *dmq1, const BIGNUM *iqmp) {
+  RSA *rsa = RSA_new();
+  if (rsa == NULL ||                     //
+      !bn_dup_into(&rsa->n, n) ||        //
+      !bn_dup_into(&rsa->e, e) ||        //
+      !bn_dup_into(&rsa->d, d) ||        //
+      !bn_dup_into(&rsa->p, p) ||        //
+      !bn_dup_into(&rsa->q, q) ||        //
+      !bn_dup_into(&rsa->dmp1, dmp1) ||  //
+      !bn_dup_into(&rsa->dmq1, dmq1) ||  //
+      !bn_dup_into(&rsa->iqmp, iqmp) ||  //
+      !RSA_check_key(rsa)) {
+    RSA_free(rsa);
+    return NULL;
+  }
+
+  return rsa;
+}
+
+RSA *RSA_new_private_key_no_crt(const BIGNUM *n, const BIGNUM *e,
+                                const BIGNUM *d) {
+  RSA *rsa = RSA_new();
+  if (rsa == NULL ||               //
+      !bn_dup_into(&rsa->n, n) ||  //
+      !bn_dup_into(&rsa->e, e) ||  //
+      !bn_dup_into(&rsa->d, d) ||  //
+      !RSA_check_key(rsa)) {
+    RSA_free(rsa);
+    return NULL;
+  }
+
+  return rsa;
+}
+
+RSA *RSA_new_private_key_no_e(const BIGNUM *n, const BIGNUM *d) {
+  RSA *rsa = RSA_new();
   if (rsa == NULL) {
     return NULL;
   }
 
-  OPENSSL_memset(rsa, 0, sizeof(RSA));
+  rsa->flags |= RSA_FLAG_NO_PUBLIC_EXPONENT;
+  if (!bn_dup_into(&rsa->n, n) ||  //
+      !bn_dup_into(&rsa->d, d) ||  //
+      !RSA_check_key(rsa)) {
+    RSA_free(rsa);
+    return NULL;
+  }
+
+  return rsa;
+}
+
+RSA *RSA_new_public_key_large_e(const BIGNUM *n, const BIGNUM *e) {
+  RSA *rsa = RSA_new();
+  if (rsa == NULL) {
+    return NULL;
+  }
+
+  rsa->flags |= RSA_FLAG_LARGE_PUBLIC_EXPONENT;
+  if (!bn_dup_into(&rsa->n, n) ||  //
+      !bn_dup_into(&rsa->e, e) ||  //
+      !RSA_check_key(rsa)) {
+    RSA_free(rsa);
+    return NULL;
+  }
+
+  return rsa;
+}
+
+RSA *RSA_new_private_key_large_e(const BIGNUM *n, const BIGNUM *e,
+                                 const BIGNUM *d, const BIGNUM *p,
+                                 const BIGNUM *q, const BIGNUM *dmp1,
+                                 const BIGNUM *dmq1, const BIGNUM *iqmp) {
+  RSA *rsa = RSA_new();
+  if (rsa == NULL) {
+    return NULL;
+  }
+
+  rsa->flags |= RSA_FLAG_LARGE_PUBLIC_EXPONENT;
+  if (!bn_dup_into(&rsa->n, n) ||        //
+      !bn_dup_into(&rsa->e, e) ||        //
+      !bn_dup_into(&rsa->d, d) ||        //
+      !bn_dup_into(&rsa->p, p) ||        //
+      !bn_dup_into(&rsa->q, q) ||        //
+      !bn_dup_into(&rsa->dmp1, dmp1) ||  //
+      !bn_dup_into(&rsa->dmq1, dmq1) ||  //
+      !bn_dup_into(&rsa->iqmp, iqmp) ||  //
+      !RSA_check_key(rsa)) {
+    RSA_free(rsa);
+    return NULL;
+  }
+
+  return rsa;
+}
+
+RSA *RSA_new(void) { return RSA_new_method(NULL); }
+
+RSA *RSA_new_method(const ENGINE *engine) {
+  RSA *rsa = OPENSSL_zalloc(sizeof(RSA));
+  if (rsa == NULL) {
+    return NULL;
+  }
 
   if (engine) {
     rsa->meth = ENGINE_get_RSA_method(engine);
@@ -118,9 +236,18 @@ RSA *RSA_new_method(const ENGINE *engine) {
   return rsa;
 }
 
-void RSA_free(RSA *rsa) {
-  unsigned u;
+RSA *RSA_new_method_no_e(const ENGINE *engine, const BIGNUM *n) {
+  RSA *rsa = RSA_new_method(engine);
+  if (rsa == NULL ||
+      !bn_dup_into(&rsa->n, n)) {
+    RSA_free(rsa);
+    return NULL;
+  }
+  rsa->flags |= RSA_FLAG_NO_PUBLIC_EXPONENT;
+  return rsa;
+}
 
+void RSA_free(RSA *rsa) {
   if (rsa == NULL) {
     return;
   }
@@ -144,18 +271,7 @@ void RSA_free(RSA *rsa) {
   BN_free(rsa->dmp1);
   BN_free(rsa->dmq1);
   BN_free(rsa->iqmp);
-  BN_MONT_CTX_free(rsa->mont_n);
-  BN_MONT_CTX_free(rsa->mont_p);
-  BN_MONT_CTX_free(rsa->mont_q);
-  BN_free(rsa->d_fixed);
-  BN_free(rsa->dmp1_fixed);
-  BN_free(rsa->dmq1_fixed);
-  BN_free(rsa->inv_small_mod_large_mont);
-  for (u = 0; u < rsa->num_blindings; u++) {
-    BN_BLINDING_free(rsa->blindings[u]);
-  }
-  OPENSSL_free(rsa->blindings);
-  OPENSSL_free(rsa->blindings_inuse);
+  rsa_invalidate_key(rsa);
   CRYPTO_MUTEX_cleanup(&rsa->lock);
   OPENSSL_free(rsa);
 }
@@ -244,6 +360,7 @@ int RSA_set0_key(RSA *rsa, BIGNUM *n, BIGNUM *e, BIGNUM *d) {
     rsa->d = d;
   }
 
+  rsa_invalidate_key(rsa);
   return 1;
 }
 
@@ -262,6 +379,7 @@ int RSA_set0_factors(RSA *rsa, BIGNUM *p, BIGNUM *q) {
     rsa->q = q;
   }
 
+  rsa_invalidate_key(rsa);
   return 1;
 }
 
@@ -285,6 +403,7 @@ int RSA_set0_crt_params(RSA *rsa, BIGNUM *dmp1, BIGNUM *dmq1, BIGNUM *iqmp) {
     rsa->iqmp = iqmp;
   }
 
+  rsa_invalidate_key(rsa);
   return 1;
 }
 
@@ -320,12 +439,8 @@ int RSA_is_opaque(const RSA *rsa) {
 
 int RSA_get_ex_new_index(long argl, void *argp, CRYPTO_EX_unused *unused,
                          CRYPTO_EX_dup *dup_unused, CRYPTO_EX_free *free_func) {
-  int index;
-  if (!CRYPTO_get_ex_new_index(g_rsa_ex_data_class_bss_get(), &index, argl,
-                               argp, free_func)) {
-    return -1;
-  }
-  return index;
+  return CRYPTO_get_ex_new_index_ex(g_rsa_ex_data_class_bss_get(), argl, argp,
+                                 free_func);
 }
 
 int RSA_set_ex_data(RSA *rsa, int idx, void *arg) {
@@ -643,7 +758,8 @@ err:
 static int check_mod_inverse(int *out_ok, const BIGNUM *a, const BIGNUM *ainv,
                              const BIGNUM *m, unsigned m_min_bits,
                              BN_CTX *ctx) {
-  if (BN_is_negative(ainv) || BN_cmp(ainv, m) >= 0) {
+  if (BN_is_negative(ainv) ||
+      constant_time_declassify_int(BN_cmp(ainv, m) >= 0)) {
     *out_ok = 0;
     return 1;
   }
@@ -657,7 +773,7 @@ static int check_mod_inverse(int *out_ok, const BIGNUM *a, const BIGNUM *ainv,
             bn_mul_consttime(tmp, a, ainv, ctx) &&
             bn_div_consttime(NULL, tmp, tmp, m, m_min_bits, ctx);
   if (ret) {
-    *out_ok = BN_is_one(tmp);
+    *out_ok = constant_time_declassify_int(BN_is_one(tmp));
   }
   BN_CTX_end(ctx);
   return ret;
@@ -716,8 +832,10 @@ int RSA_check_key(const RSA *key) {
   // bounds, to avoid a DoS vector in |bn_mul_consttime| below. Note that
   // n was bound by |rsa_check_public_key|. This also implicitly checks p and q
   // are odd, which is a necessary condition for Montgomery reduction.
-  if (BN_is_negative(key->p) || BN_cmp(key->p, key->n) >= 0 ||
-      BN_is_negative(key->q) || BN_cmp(key->q, key->n) >= 0) {
+  if (BN_is_negative(key->p) ||
+      constant_time_declassify_int(BN_cmp(key->p, key->n) >= 0) ||
+      BN_is_negative(key->q) ||
+      constant_time_declassify_int(BN_cmp(key->q, key->n) >= 0)) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_N_NOT_EQUAL_P_Q);
     goto out;
   }
@@ -748,7 +866,8 @@ int RSA_check_key(const RSA *key) {
     goto out;
   }
 
-  if (!BN_is_one(&tmp) || !BN_is_one(&de)) {
+  if (constant_time_declassify_int(!BN_is_one(&tmp)) ||
+      constant_time_declassify_int(!BN_is_one(&de))) {
     OPENSSL_PUT_ERROR(RSA, RSA_R_D_E_NOT_CONGRUENT_TO_1);
     goto out;
   }

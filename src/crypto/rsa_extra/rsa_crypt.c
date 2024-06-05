@@ -75,7 +75,9 @@ static void rand_nonzero(uint8_t *out, size_t len) {
   RAND_bytes(out, len);
 
   for (size_t i = 0; i < len; i++) {
-    while (out[i] == 0) {
+    // Zero values are replaced, and the distribution of zero and non-zero bytes
+    // is public, so leaking this is safe.
+    while (constant_time_declassify_int(out[i] == 0)) {
       RAND_bytes(out + i, 1);
     }
   }
@@ -376,6 +378,11 @@ int RSA_private_encrypt(size_t flen, const uint8_t *from, uint8_t *to, RSA *rsa,
 
 int RSA_encrypt(RSA *rsa, size_t *out_len, uint8_t *out, size_t max_out,
                 const uint8_t *in, size_t in_len, int padding) {
+  if (rsa->n == NULL || rsa->e == NULL) {
+    OPENSSL_PUT_ERROR(RSA, RSA_R_VALUE_MISSING);
+    return 0;
+  }
+
   if (!rsa_check_public_key(rsa)) {
     return 0;
   }
