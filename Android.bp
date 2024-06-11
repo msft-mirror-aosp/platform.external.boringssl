@@ -929,6 +929,7 @@ rust_library_rlib {
 rust_defaults {
     name: "libbssl_crypto_defaults",
     crate_name: "bssl_crypto",
+    visibility: ["//visibility:public"],
     srcs: ["src/rust/bssl-crypto/src/lib.rs"],
     rustlibs: ["libbssl_sys"],
 }
@@ -940,9 +941,6 @@ rust_library {
     apex_available: [
         "//apex_available:platform",
         "com.android.virt",
-    ],
-    visibility: [
-        "//external/rust/beto-rust/nearby",
     ],
     vendor_available: true,
     product_available: true,
