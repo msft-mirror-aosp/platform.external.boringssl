@@ -17,7 +17,6 @@
 # file, or use list(TRANSFORM ... PREPEND) from CMake 3.12.
 
 set(crypto_sources
-  ${BORINGSSL_ROOT}err_data.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_bitstr.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_bool.c
   ${BORINGSSL_ROOT}src/crypto/asn1/a_d2i_fp.c
@@ -96,6 +95,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/dh_extra/dh_asn1.c
   ${BORINGSSL_ROOT}src/crypto/dh_extra/params.c
   ${BORINGSSL_ROOT}src/crypto/digest_extra/digest_extra.c
+  ${BORINGSSL_ROOT}src/crypto/dilithium/dilithium.c
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa.c
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa_asn1.c
   ${BORINGSSL_ROOT}src/crypto/ec_extra/ec_asn1.c
@@ -108,6 +108,8 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/evp/evp.c
   ${BORINGSSL_ROOT}src/crypto/evp/evp_asn1.c
   ${BORINGSSL_ROOT}src/crypto/evp/evp_ctx.c
+  ${BORINGSSL_ROOT}src/crypto/evp/p_dh.c
+  ${BORINGSSL_ROOT}src/crypto/evp/p_dh_asn1.c
   ${BORINGSSL_ROOT}src/crypto/evp/p_dsa_asn1.c
   ${BORINGSSL_ROOT}src/crypto/evp/p_ec.c
   ${BORINGSSL_ROOT}src/crypto/evp/p_ec_asn1.c
@@ -249,180 +251,170 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/x509/x_val.c
   ${BORINGSSL_ROOT}src/crypto/x509/x_x509.c
   ${BORINGSSL_ROOT}src/crypto/x509/x_x509a.c
+  ${BORINGSSL_ROOT}src/gen/crypto/err_data.c
 )
 set(crypto_sources_asm
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/chacha/chacha-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/cipher_extra/chacha20_poly1305_armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/aesv8-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/aesv8-gcm-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/armv8-mont-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/bn-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/ghash-neon-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/ghashv8-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/p256-armv8-asm-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/p256_beeu-armv8-asm-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/sha1-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/sha256-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/sha512-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/fipsmodule/vpaes-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-aarch64/crypto/test/trampoline-armv8-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/chacha/chacha-armv4-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/aesv8-armv7-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/armv4-mont-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/bsaes-armv7-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/ghash-armv4-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/ghashv8-armv7-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/sha1-armv4-large-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/sha256-armv4-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/sha512-armv4-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/fipsmodule/vpaes-armv7-apple.S
-  ${BORINGSSL_ROOT}apple-arm/crypto/test/trampoline-armv4-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/chacha/chacha-x86-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/aesni-x86-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/bn-586-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/co-586-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/ghash-ssse3-x86-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/ghash-x86-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/md5-586-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/sha1-586-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/sha256-586-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/sha512-586-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/vpaes-x86-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/fipsmodule/x86-mont-apple.S
-  ${BORINGSSL_ROOT}apple-x86/crypto/test/trampoline-x86-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/chacha/chacha-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/aesni-gcm-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/aesni-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/ghash-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/md5-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/p256-x86_64-asm-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/p256_beeu-x86_64-asm-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/rdrand-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/rsaz-avx2-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/sha1-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/sha256-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/sha512-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/vpaes-x86_64-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/x86_64-mont-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/fipsmodule/x86_64-mont5-apple.S
-  ${BORINGSSL_ROOT}apple-x86_64/crypto/test/trampoline-x86_64-apple.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/chacha/chacha-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/cipher_extra/chacha20_poly1305_armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/aesv8-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/aesv8-gcm-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/armv8-mont-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/bn-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/ghash-neon-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/ghashv8-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/p256-armv8-asm-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/p256_beeu-armv8-asm-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/sha1-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/sha256-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/sha512-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/fipsmodule/vpaes-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-aarch64/crypto/test/trampoline-armv8-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/chacha/chacha-armv4-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/aesv8-armv7-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/armv4-mont-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/bsaes-armv7-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/ghash-armv4-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/ghashv8-armv7-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/sha1-armv4-large-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/sha256-armv4-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/sha512-armv4-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/fipsmodule/vpaes-armv7-linux.S
-  ${BORINGSSL_ROOT}linux-arm/crypto/test/trampoline-armv4-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/chacha/chacha-x86-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/aesni-x86-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/bn-586-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/co-586-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/ghash-ssse3-x86-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/ghash-x86-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/md5-586-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/sha1-586-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/sha256-586-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/sha512-586-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/vpaes-x86-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/fipsmodule/x86-mont-linux.S
-  ${BORINGSSL_ROOT}linux-x86/crypto/test/trampoline-x86-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/chacha/chacha-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/aesni-gcm-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/aesni-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/ghash-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/md5-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/p256-x86_64-asm-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/p256_beeu-x86_64-asm-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/rdrand-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/rsaz-avx2-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/sha1-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/sha256-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/sha512-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/vpaes-x86_64-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/x86_64-mont-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/fipsmodule/x86_64-mont5-linux.S
-  ${BORINGSSL_ROOT}linux-x86_64/crypto/test/trampoline-x86_64-linux.S
   ${BORINGSSL_ROOT}src/crypto/curve25519/asm/x25519-asm-arm.S
   ${BORINGSSL_ROOT}src/crypto/hrss/asm/poly_rq_mul.S
   ${BORINGSSL_ROOT}src/crypto/poly1305/poly1305_arm_asm.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-gcm-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-gcm-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-x86-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-x86-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesv8-armv7-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesv8-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesv8-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesv8-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesv8-gcm-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesv8-gcm-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/aesv8-gcm-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/armv4-mont-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/armv8-mont-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/armv8-mont-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/armv8-mont-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/bn-586-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/bn-586-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/bn-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/bn-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/bn-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/bsaes-armv7-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/co-586-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/co-586-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-armv4-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-neon-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-neon-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-neon-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-ssse3-x86-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-ssse3-x86-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-ssse3-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-ssse3-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-x86-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-x86-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghashv8-armv7-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghashv8-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghashv8-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/ghashv8-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/md5-586-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/md5-586-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/md5-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/md5-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256-armv8-asm-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256-armv8-asm-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256-armv8-asm-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256-x86_64-asm-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256-x86_64-asm-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256_beeu-armv8-asm-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256_beeu-armv8-asm-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256_beeu-armv8-asm-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256_beeu-x86_64-asm-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/p256_beeu-x86_64-asm-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/rdrand-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/rdrand-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/rsaz-avx2-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/rsaz-avx2-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-586-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-586-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-armv4-large-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-586-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-586-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-armv4-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-586-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-586-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-armv4-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-armv7-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-x86-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-x86-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/x86-mont-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/x86-mont-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/x86_64-mont-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/x86_64-mont-linux.S
+  ${BORINGSSL_ROOT}src/gen/bcm/x86_64-mont5-apple.S
+  ${BORINGSSL_ROOT}src/gen/bcm/x86_64-mont5-linux.S
+  ${BORINGSSL_ROOT}src/gen/crypto/aes128gcmsiv-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/crypto/aes128gcmsiv-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-armv4-linux.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-x86-apple.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-x86-linux.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha20_poly1305_armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha20_poly1305_armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha20_poly1305_armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha20_poly1305_x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha20_poly1305_x86_64-linux.S
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-armv4-linux.S
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-armv8-apple.S
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-armv8-linux.S
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-armv8-win.S
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-x86-apple.S
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-x86-linux.S
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-x86_64-apple.S
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-x86_64-linux.S
   ${BORINGSSL_ROOT}src/third_party/fiat/asm/fiat_curve25519_adx_mul.S
   ${BORINGSSL_ROOT}src/third_party/fiat/asm/fiat_curve25519_adx_square.S
   ${BORINGSSL_ROOT}src/third_party/fiat/asm/fiat_p256_adx_mul.S
   ${BORINGSSL_ROOT}src/third_party/fiat/asm/fiat_p256_adx_sqr.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/chacha/chacha-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/cipher_extra/chacha20_poly1305_armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/aesv8-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/aesv8-gcm-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/armv8-mont-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/bn-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/ghash-neon-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/ghashv8-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/p256-armv8-asm-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/p256_beeu-armv8-asm-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/sha1-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/sha256-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/sha512-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/fipsmodule/vpaes-armv8-win.S
-  ${BORINGSSL_ROOT}win-aarch64/crypto/test/trampoline-armv8-win.S
 )
 set(crypto_sources_nasm
-  ${BORINGSSL_ROOT}win-x86/crypto/chacha/chacha-x86-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/aesni-x86-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/bn-586-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/co-586-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/ghash-ssse3-x86-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/ghash-x86-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/md5-586-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/sha1-586-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/sha256-586-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/sha512-586-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/vpaes-x86-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/fipsmodule/x86-mont-win.asm
-  ${BORINGSSL_ROOT}win-x86/crypto/test/trampoline-x86-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/chacha/chacha-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/cipher_extra/aes128gcmsiv-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/cipher_extra/chacha20_poly1305_x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/aesni-gcm-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/aesni-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/ghash-ssse3-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/ghash-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/md5-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/p256-x86_64-asm-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/p256_beeu-x86_64-asm-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/rdrand-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/rsaz-avx2-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/sha1-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/sha256-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/sha512-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/vpaes-x86_64-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/x86_64-mont-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/fipsmodule/x86_64-mont5-win.asm
-  ${BORINGSSL_ROOT}win-x86_64/crypto/test/trampoline-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-gcm-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-x86-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/aesni-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/bn-586-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/co-586-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-ssse3-x86-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-ssse3-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-x86-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/ghash-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/md5-586-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/md5-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/p256-x86_64-asm-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/p256_beeu-x86_64-asm-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/rdrand-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/rsaz-avx2-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-586-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/sha1-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-586-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/sha256-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-586-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/sha512-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-x86-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/vpaes-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/x86-mont-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/x86_64-mont-win.asm
+  ${BORINGSSL_ROOT}src/gen/bcm/x86_64-mont5-win.asm
+  ${BORINGSSL_ROOT}src/gen/crypto/aes128gcmsiv-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-x86-win.asm
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha-x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/crypto/chacha20_poly1305_x86_64-win.asm
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-x86-win.asm
+  ${BORINGSSL_ROOT}src/gen/test_support/trampoline-x86_64-win.asm
 )
 set(ssl_sources
   ${BORINGSSL_ROOT}src/ssl/bio_ssl.cc
@@ -446,6 +438,7 @@ set(ssl_sources
   ${BORINGSSL_ROOT}src/ssl/ssl_buffer.cc
   ${BORINGSSL_ROOT}src/ssl/ssl_cert.cc
   ${BORINGSSL_ROOT}src/ssl/ssl_cipher.cc
+  ${BORINGSSL_ROOT}src/ssl/ssl_credential.cc
   ${BORINGSSL_ROOT}src/ssl/ssl_file.cc
   ${BORINGSSL_ROOT}src/ssl/ssl_key_share.cc
   ${BORINGSSL_ROOT}src/ssl/ssl_lib.cc
@@ -485,11 +478,13 @@ set(tool_sources
 set(test_support_sources
   ${BORINGSSL_ROOT}src/crypto/test/abi_test.cc
   ${BORINGSSL_ROOT}src/crypto/test/file_test.cc
+  ${BORINGSSL_ROOT}src/crypto/test/file_test_gtest.cc
+  ${BORINGSSL_ROOT}src/crypto/test/file_util.cc
+  ${BORINGSSL_ROOT}src/crypto/test/test_data.cc
   ${BORINGSSL_ROOT}src/crypto/test/test_util.cc
   ${BORINGSSL_ROOT}src/crypto/test/wycheproof_util.cc
 )
 set(crypto_test_sources
-  ${BORINGSSL_ROOT}crypto_test_data.cc
   ${BORINGSSL_ROOT}src/crypto/abi_self_test.cc
   ${BORINGSSL_ROOT}src/crypto/asn1/asn1_test.cc
   ${BORINGSSL_ROOT}src/crypto/base64/base64_test.cc
@@ -510,6 +505,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/curve25519/x25519_test.cc
   ${BORINGSSL_ROOT}src/crypto/dh_extra/dh_test.cc
   ${BORINGSSL_ROOT}src/crypto/digest_extra/digest_test.cc
+  ${BORINGSSL_ROOT}src/crypto/dilithium/dilithium_test.cc
   ${BORINGSSL_ROOT}src/crypto/dsa/dsa_test.cc
   ${BORINGSSL_ROOT}src/crypto/ecdh_extra/ecdh_test.cc
   ${BORINGSSL_ROOT}src/crypto/err/err_test.cc
@@ -553,13 +549,255 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/siphash/siphash_test.cc
   ${BORINGSSL_ROOT}src/crypto/spx/spx_test.cc
   ${BORINGSSL_ROOT}src/crypto/stack/stack_test.cc
-  ${BORINGSSL_ROOT}src/crypto/test/file_test_gtest.cc
   ${BORINGSSL_ROOT}src/crypto/test/gtest_main.cc
   ${BORINGSSL_ROOT}src/crypto/thread_test.cc
   ${BORINGSSL_ROOT}src/crypto/trust_token/trust_token_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509/tab_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_time_test.cc
+)
+set(crypto_test_data
+  ${BORINGSSL_ROOT}src/crypto/blake2/blake2b256_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_cbc_sha1_tls_implicit_iv_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_cbc_sha1_tls_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_ccm_bluetooth_8_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_ccm_bluetooth_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_ccm_matter_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_ctr_hmac_sha256.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_gcm_randnonce_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_gcm_siv_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_128_gcm_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_192_gcm_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_256_cbc_sha1_tls_implicit_iv_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_256_cbc_sha1_tls_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_256_ctr_hmac_sha256.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_256_gcm_randnonce_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_256_gcm_siv_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/aes_256_gcm_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/chacha20_poly1305_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/cipher_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/des_ede3_cbc_sha1_tls_implicit_iv_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/des_ede3_cbc_sha1_tls_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/aes_128_cbc.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/aes_128_ctr.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/aes_128_gcm.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/aes_192_cbc.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/aes_192_ctr.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/aes_256_cbc.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/aes_256_ctr.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/aes_256_gcm.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/tdes_cbc.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/nist_cavp/tdes_ecb.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher_extra/test/xchacha20_poly1305_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/curve25519/ed25519_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/dilithium/dilithium_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/dilithium/edge_cases_draft_dilithium3_sign.txt
+  ${BORINGSSL_ROOT}src/crypto/dilithium/edge_cases_draft_dilithium3_verify.txt
+  ${BORINGSSL_ROOT}src/crypto/ecdh_extra/ecdh_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/evp/evp_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/evp/scrypt_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/aes/aes_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/exp_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/gcd_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/miller_rabin_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/mod_exp_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/mod_inv_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/mod_mul_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/mod_sqrt_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/product_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/quotient_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/shift_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/sum_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cavp_3des_cmac_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cavp_aes128_cmac_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cavp_aes192_cmac_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cavp_aes256_cmac_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/ec_scalar_base_mult_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-nistz_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_sign_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_verify_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/modes/gcm_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/rand/ctrdrbg_vectors.txt
+  ${BORINGSSL_ROOT}src/crypto/hmac_extra/hmac_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test_vectors.txt
+  ${BORINGSSL_ROOT}src/crypto/keccak/keccak_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/kyber/kyber_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/bad1.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/bad2.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/bad3.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/empty_password.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/empty_password_ber.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/empty_password_ber_nested.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/no_encryption.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/nss.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/null_password.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/openssl.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/pbes2_sha1.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/pbes2_sha256.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/unicode_password.p12
+  ${BORINGSSL_ROOT}src/crypto/pkcs8/test/windows.p12
+  ${BORINGSSL_ROOT}src/crypto/poly1305/poly1305_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/siphash/siphash_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/spx/spx_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/spx/spx_tests_deterministic.txt
+  ${BORINGSSL_ROOT}src/crypto/x509/test/basic_constraints_ca.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/basic_constraints_ca_pathlen_0.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/basic_constraints_ca_pathlen_1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/basic_constraints_ca_pathlen_10.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/basic_constraints_leaf.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/basic_constraints_none.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_intermediate.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_intermediate_authority_key_identifier.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_intermediate_basic_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_intermediate_ext_key_usage.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_intermediate_key_usage.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_intermediate_name_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_intermediate_subject_alt_name.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_intermediate_subject_key_identifier.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_leaf.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_leaf_authority_key_identifier.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_leaf_basic_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_leaf_ext_key_usage.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_leaf_key_usage.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_leaf_name_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_leaf_subject_alt_name.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_leaf_subject_key_identifier.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_root.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_root_authority_key_identifier.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_root_basic_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_root_ext_key_usage.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_root_key_usage.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_root_name_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_root_subject_alt_name.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/invalid_extension_root_subject_key_identifier.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/many_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/many_names1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/many_names2.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/many_names3.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_any.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_duplicate.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_invalid.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_mapped.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_mapped_any.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_mapped_oid3.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_require.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_require1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_require2.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_require_duplicate.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_require_no_policies.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_any.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_duplicate.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_invalid.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_none.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_oid1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_oid2.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_oid3.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_oid4.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_oid5.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_require.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_leaf_require1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_root.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_root2.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/policy_root_cross_inhibit_mapping.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha1_explicit.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha1_mgf1_syntax_error.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha224.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256_explicit_trailer.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256_mgf1_sha384.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256_mgf1_syntax_error.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256_omit_nulls.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256_salt31.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256_salt_overflow.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256_unknown_mgf.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha256_wrong_trailer.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha384.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/pss_sha512.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/some_names1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/some_names2.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/some_names3.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/trailing_data_leaf_authority_key_identifier.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/trailing_data_leaf_basic_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/trailing_data_leaf_ext_key_usage.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/trailing_data_leaf_key_usage.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/trailing_data_leaf_name_constraints.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/trailing_data_leaf_subject_alt_name.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/trailing_data_leaf_subject_key_identifier.pem
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/aes_cbc_pkcs5_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/aes_cmac_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/aes_gcm_siv_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/aes_gcm_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/chacha20_poly1305_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/dsa_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdh_secp224r1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdh_secp256r1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdh_secp384r1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdh_secp521r1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdsa_secp224r1_sha224_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdsa_secp224r1_sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdsa_secp224r1_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdsa_secp256r1_sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdsa_secp256r1_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdsa_secp384r1_sha384_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdsa_secp384r1_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/ecdsa_secp521r1_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/eddsa_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hkdf_sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hkdf_sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hkdf_sha384_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hkdf_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hmac_sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hmac_sha224_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hmac_sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hmac_sha384_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/hmac_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/kw_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/kwp_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/primality_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha1_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha224_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha224_mgf1sha224_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha256_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha256_mgf1sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha384_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha384_mgf1sha384_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha512_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha512_mgf1sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_3072_sha256_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_3072_sha256_mgf1sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_3072_sha512_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_3072_sha512_mgf1sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_4096_sha256_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_4096_sha256_mgf1sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_4096_sha512_mgf1sha1_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_4096_sha512_mgf1sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_misc_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pkcs1_2048_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pkcs1_3072_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pkcs1_4096_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pss_2048_sha1_mgf1_20_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pss_2048_sha256_mgf1_0_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pss_2048_sha256_mgf1_32_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pss_3072_sha256_mgf1_32_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pss_4096_sha256_mgf1_32_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pss_4096_sha512_mgf1_32_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_pss_misc_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_sig_gen_misc_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_2048_sha224_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_2048_sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_2048_sha384_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_2048_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_3072_sha256_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_3072_sha384_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_3072_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_4096_sha384_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_4096_sha512_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_signature_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/x25519_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/xchacha20_poly1305_test.txt
 )
 set(ssl_test_sources
   ${BORINGSSL_ROOT}src/crypto/test/gtest_main.cc
