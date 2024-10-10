@@ -979,3 +979,9 @@ rust_test {
     test_suites: ["general-tests"],
     auto_gen_config: true,
 }
+
+dirgroup {
+    name: "trusty_dirgroup_external_boringssl",
+    dirs: ["."],
+    visibility: ["//trusty/vendor/google/aosp/scripts"],
+}
