@@ -187,6 +187,7 @@ cc_object {
         "com.android.ondevicepersonalization",
         "com.android.resolv",
         "com.android.virt",
+        "com.android.wifi",
     ],
 }
 
@@ -289,6 +290,7 @@ cc_library {
         "com.android.resolv",
         "com.android.ondevicepersonalization",
         "com.android.virt",
+        "com.android.wifi",
     ],
     min_sdk_version: "29",
     afdo: true,
@@ -348,7 +350,7 @@ cc_library_static {
         "//bootable/deprecated-ota/updater",
         "//external/conscrypt",
         "//external/python/cpython2",
-        "//external/rust/crates/quiche",
+        "//external/rust/android-crates-io/crates/quiche",
         // Strictly, only the *static* toybox for legacy devices should have
         // access to libcrypto_static, but we can't express that.
         "//external/toybox",
@@ -516,6 +518,7 @@ cc_library {
         "com.android.conscrypt",
         "com.android.resolv",
         "com.android.virt",
+        "com.android.wifi",
     ],
     min_sdk_version: "29",
 }
@@ -746,6 +749,9 @@ cc_binary {
     defaults: [
         "boringssl_flags",
     ],
+    cflags: [
+        "-DBORINGSSL_FIPS",
+    ],
     shared_libs: [
         "libcrypto",
     ],
@@ -878,6 +884,7 @@ rust_defaults {
     crate_name: "bssl_sys",
     visibility: [
         "//external/rust/crates/openssl",
+        "//external/rust/crates/tokio-openssl",
         "//system/keymint/boringssl",
         "//system/security/prng_seeder",
     ],
@@ -972,4 +979,10 @@ rust_test {
     crate_name: "bssl_crypto_test",
     test_suites: ["general-tests"],
     auto_gen_config: true,
+}
+
+dirgroup {
+    name: "trusty_dirgroup_external_boringssl",
+    dirs: ["."],
+    visibility: ["//trusty/vendor/google/aosp/scripts"],
 }
