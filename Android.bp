@@ -79,7 +79,10 @@ cc_defaults {
         "-DBORINGSSL_NO_STATIC_INITIALIZER",
         "-DANDROID_BAREMETAL",
     ],
-    defaults: ["boringssl_flags_common"],
+    defaults: [
+        "boringssl_flags_common",
+        "cc_baremetal_defaults",
+    ],
     apex_available: [
         "com.android.virt",
     ],
