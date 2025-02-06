@@ -33,6 +33,7 @@ const (
 const (
 	VersionDTLS10 = 0xfeff
 	VersionDTLS12 = 0xfefd
+	VersionDTLS13 = 0xfefc
 )
 
 var allTLSWireVersions = []uint16{
@@ -44,16 +45,17 @@ var allTLSWireVersions = []uint16{
 }
 
 var allDTLSWireVersions = []uint16{
+	VersionDTLS13,
 	VersionDTLS12,
 	VersionDTLS10,
 }
 
 const (
-	maxPlaintext        = 16384        // maximum plaintext payload length
-	maxCiphertext       = 16384 + 2048 // maximum ciphertext payload length
-	tlsRecordHeaderLen  = 5            // record header length
-	dtlsRecordHeaderLen = 13
-	maxHandshake        = 65536 // maximum handshake we support (protocol max is 16 MB)
+	maxPlaintext           = 16384        // maximum plaintext payload length
+	maxCiphertext          = 16384 + 2048 // maximum ciphertext payload length
+	tlsRecordHeaderLen     = 5            // record header length
+	dtlsMaxRecordHeaderLen = 13
+	maxHandshake           = 65536 // maximum handshake we support (protocol max is 16 MB)
 
 	minVersion = VersionSSL30
 	maxVersion = VersionTLS13
@@ -68,6 +70,7 @@ const (
 	recordTypeHandshake          recordType = 22
 	recordTypeApplicationData    recordType = 23
 	recordTypePlaintextHandshake recordType = 24
+	recordTypeACK                recordType = 26
 )
 
 // TLS handshake message types.
@@ -130,6 +133,7 @@ const (
 	extensionRenegotiationInfo          uint16 = 0xff01
 	extensionQUICTransportParamsLegacy  uint16 = 0xffa5 // draft-ietf-quic-tls-32 and earlier
 	extensionChannelID                  uint16 = 30032  // not IANA assigned
+	extensionPAKE                       uint16 = 35387  // not IANA assigned
 	extensionDuplicate                  uint16 = 0xffff // not IANA assigned
 	extensionEncryptedClientHello       uint16 = 0xfe0d // not IANA assigned
 	extensionECHOuterExtensions         uint16 = 0xfd00 // not IANA assigned
@@ -156,6 +160,7 @@ const (
 	CurveP384           CurveID = 24
 	CurveP521           CurveID = 25
 	CurveX25519         CurveID = 29
+	CurveX25519MLKEM768 CurveID = 0x11ec
 	CurveX25519Kyber768 CurveID = 0x6399
 )
 
@@ -259,6 +264,9 @@ const (
 
 // draft-ietf-tls-esni-13, sections 7.2 and 7.2.1.
 const echAcceptConfirmationLength = 8
+
+// Temporary value; pre RFC.
+const spakeID uint16 = 0x7d96
 
 // ConnectionState records basic TLS details about the connection.
 type ConnectionState struct {
@@ -615,6 +623,16 @@ type Config struct {
 
 	CertCompressionAlgs map[uint16]CertCompressionAlg
 
+	// DTLSUseShortSeqNums specifies whether the DTLS 1.3 record header
+	// should use short (8-bit) or long (16-bit) sequence numbers. The
+	// default is to use long sequence numbers.
+	DTLSUseShortSeqNums bool
+
+	// DTLSRecordHeaderOmitLength specified whether the DTLS 1.3 record
+	// header includes a length field. The default is to include the length
+	// field.
+	DTLSRecordHeaderOmitLength bool
+
 	// Bugs specifies optional misbehaviour to be used for testing other
 	// implementations.
 	Bugs ProtocolBugs
@@ -658,9 +676,15 @@ type ProtocolBugs struct {
 	// than the negotiated one.
 	SendCurve CurveID
 
-	// InvalidECDHPoint, if true, causes the ECC points in
-	// ServerKeyExchange or ClientKeyExchange messages to be invalid.
-	InvalidECDHPoint bool
+	// ECDHPointNotOnCurve, if true, causes the ECDH points to not be on the
+	// curve.
+	ECDHPointNotOnCurve bool
+
+	// TruncateKeyShare, if true, causes key shares to be truncated by one byte.
+	TruncateKeyShare bool
+
+	// PadKeyShare, if true, causes key shares to be truncated to one byte.
+	PadKeyShare bool
 
 	// BadECDSAR controls ways in which the 'r' value of an ECDSA signature
 	// can be invalid.
@@ -693,6 +717,11 @@ type ProtocolBugs struct {
 	// SkipHelloVerifyRequest causes a DTLS server to skip the
 	// HelloVerifyRequest message.
 	SkipHelloVerifyRequest bool
+
+	// ForceHelloVerifyRequest causes a DTLS server to send a
+	// HelloVerifyRequest message in DTLS 1.3 or other cases where it
+	// otherwise wouldn't.
+	ForceHelloVerifyRequest bool
 
 	// HelloVerifyRequestCookieLength, if non-zero, is the length of the cookie
 	// to request in HelloVerifyRequest.
@@ -740,6 +769,10 @@ type ProtocolBugs struct {
 	// EndOfEarlyData.
 	NonEmptyEndOfEarlyData bool
 
+	// SendEndOfEarlyDataInQUICAndDTLS causes the implementation to send
+	// EndOfEarlyData even in QUIC and DTLS, which do not use the message.
+	SendEndOfEarlyDataInQUICAndDTLS bool
+
 	// SkipCertificateVerify, if true causes peer to skip sending a
 	// CertificateVerify message after the Certificate message.
 	SkipCertificateVerify bool
@@ -749,16 +782,6 @@ type ProtocolBugs struct {
 	// zero disables this behavior. One and two configure variants for
 	// 1.0.1 and 0.9.8 modes, respectively.
 	EarlyChangeCipherSpec int
-
-	// StrayChangeCipherSpec causes every pre-ChangeCipherSpec handshake
-	// message in DTLS to be prefaced by stray ChangeCipherSpec record. This
-	// may be used to test DTLS's handling of reordered ChangeCipherSpec.
-	StrayChangeCipherSpec bool
-
-	// ReorderChangeCipherSpec causes the ChangeCipherSpec message to be
-	// sent at start of each flight in DTLS. Unlike EarlyChangeCipherSpec,
-	// the cipher change happens at the usual time.
-	ReorderChangeCipherSpec bool
 
 	// FragmentAcrossChangeCipherSpec causes the implementation to fragment
 	// the Finished (or NextProto) message around the ChangeCipherSpec
@@ -772,10 +795,6 @@ type ProtocolBugs struct {
 	// SendPostHandshakeChangeCipherSpec causes the implementation to send
 	// a ChangeCipherSpec record before every application data record.
 	SendPostHandshakeChangeCipherSpec bool
-
-	// SendUnencryptedFinished, if true, causes the Finished message to be
-	// send unencrypted before ChangeCipherSpec rather than after it.
-	SendUnencryptedFinished bool
 
 	// PartialEncryptedExtensionsWithServerHello, if true, causes the TLS
 	// 1.3 server to send part of EncryptedExtensions unencrypted
@@ -843,15 +862,10 @@ type ProtocolBugs struct {
 
 	// MaxHandshakeRecordLength, if non-zero, is the maximum size of a
 	// handshake record. Handshake messages will be split into multiple
-	// records at the specified size, except that the client_version will
-	// never be fragmented. For DTLS, it is the maximum handshake fragment
-	// size, not record size; DTLS allows multiple handshake fragments in a
-	// single handshake record. See |PackHandshakeFragments|.
+	// records at the specified size. For DTLS, it is the maximum handshake
+	// fragment size, not record size; DTLS allows multiple handshake fragments
+	// in a single handshake record. See |PackHandshakeFragments|.
 	MaxHandshakeRecordLength int
-
-	// FragmentClientVersion will allow MaxHandshakeRecordLength to apply to
-	// the first 6 bytes of the ClientHello.
-	FragmentClientVersion bool
 
 	// FragmentAlert will cause all alerts to be fragmented across
 	// two records.
@@ -1125,10 +1139,15 @@ type ProtocolBugs struct {
 	ExpectNoSessionID bool
 
 	// ExpectNoTLS12Session, if true, causes the server to fail the
-	// connection if the server offered a TLS 1.2 session. TLS 1.3 clients
+	// connection if the client offered a TLS 1.2 session. TLS 1.3 clients
 	// always offer session IDs for compatibility, so the session ID check
 	// checks for sessions the server issued.
 	ExpectNoTLS12Session bool
+
+	// ExpectNoTLS12TicketSupport, if true, causes the server to fail the
+	// connection if the client signaled TLS 1.2 session ticket support.
+	// (This implicitly enforces that the client does not send a ticket.)
+	ExpectNoTLS12TicketSupport bool
 
 	// ExpectNoTLS13PSK, if true, causes the server to fail the connection
 	// if a TLS 1.3 PSK is offered.
@@ -1230,7 +1249,8 @@ type ProtocolBugs struct {
 	SendInitialRecordVersion uint16
 
 	// MaxPacketLength, if non-zero, is the maximum acceptable size for a
-	// packet.
+	// packet. The shim will also be expected to maximally fill packets in the
+	// handshake up to this limit.
 	MaxPacketLength int
 
 	// SendCipherSuite, if non-zero, is the cipher suite value that the
@@ -1255,12 +1275,30 @@ type ProtocolBugs struct {
 	// immediately after ChangeCipherSpec.
 	AlertAfterChangeCipherSpec alert
 
-	// TimeoutSchedule is the schedule of packet drops and simulated
-	// timeouts for before each handshake leg from the peer.
-	TimeoutSchedule []time.Duration
+	// AppDataBeforeTLS13KeyChange, if not nil, causes application data to
+	// be sent immediately before the final key change in (D)TLS 1.3.
+	AppDataBeforeTLS13KeyChange []byte
+
+	// UnencryptedEncryptedExtensions, if true, causes the server to send
+	// EncryptedExtensions unencrypted, delaying the first key change.
+	UnencryptedEncryptedExtensions bool
 
 	// PacketAdaptor is the packetAdaptor to use to simulate timeouts.
 	PacketAdaptor *packetAdaptor
+
+	// WriteFlightDTLS, if not nil, overrides the default behavior for writing
+	// the flight in DTLS. See DTLSController for details.
+	WriteFlightDTLS WriteFlightFunc
+
+	// ACKFlightDTLS, if not nil, overrides the default behavior for
+	// acknowledging the final flight (of either the handshake or a
+	// post-handshake transaction) in DTLS. See DTLSController for details.
+	ACKFlightDTLS ACKFlightFunc
+
+	// SkipImplicitACKRead, if true, causes the DTLS 1.3 client to skip
+	// implicitly reading the ACK at the end of the handshake. This may be used
+	// when WriteFlightDTLS consumes the ACK itself.
+	SkipImplicitACKRead bool
 
 	// MockQUICTransport is the mockQUICTransport used when testing
 	// QUIC interfaces.
@@ -1272,18 +1310,10 @@ type ProtocolBugs struct {
 	// Finished and will trigger a spurious retransmit.)
 	ReorderHandshakeFragments bool
 
-	// ReverseHandshakeFragments, if true, causes handshake fragments in
-	// DTLS to be reversed within a flight.
-	ReverseHandshakeFragments bool
-
 	// MixCompleteMessageWithFragments, if true, causes handshake
 	// messages in DTLS to redundantly both fragment the message
 	// and include a copy of the full one.
 	MixCompleteMessageWithFragments bool
-
-	// RetransmitFinished, if true, causes the DTLS Finished message to be
-	// sent twice.
-	RetransmitFinished bool
 
 	// SendInvalidRecordType, if true, causes a record with an invalid
 	// content type to be sent immediately following the handshake.
@@ -1296,14 +1326,6 @@ type ProtocolBugs struct {
 	// SendTrailingMessageData, if non-zero, causes messages of the
 	// specified type to be sent with trailing data.
 	SendTrailingMessageData byte
-
-	// FragmentMessageTypeMismatch, if true, causes all non-initial
-	// handshake fragments in DTLS to have the wrong message type.
-	FragmentMessageTypeMismatch bool
-
-	// FragmentMessageLengthMismatch, if true, causes all non-initial
-	// handshake fragments in DTLS to have the wrong message length.
-	FragmentMessageLengthMismatch bool
 
 	// SplitFragments, if non-zero, causes the handshake fragments in DTLS
 	// to be split across two records. The value of |SplitFragments| is the
@@ -1437,9 +1459,16 @@ type ProtocolBugs struct {
 	// modes to send. If a non-nil empty slice, no extension will be sent.
 	SendPSKKeyExchangeModes []byte
 
-	// ExpectNoNewSessionTicket, if present, means that the client will fail upon
+	// ExpectNoNewSessionTicket, if true, means that the client will fail upon
 	// receipt of a NewSessionTicket message.
 	ExpectNoNewSessionTicket bool
+
+	// ExpectNoNonEmptyNewSessionTicket, if true, means that the client will
+	// fail upon receipt of a NewSessionTicket message that was non-empty. In
+	// TLS 1.3, this is the same as ExpectNoNewSessionTicket. In TLS 1.2, this
+	// allows the server to commit to sending NewSessionTicket, but then decline
+	// to send one.
+	ExpectNoNonEmptyNewSessionTicket bool
 
 	// DuplicateTicketEarlyData causes an extra empty extension of early_data to
 	// be sent in NewSessionTicket.
@@ -1661,11 +1690,6 @@ type ProtocolBugs struct {
 	// the number of records or their content do not match.
 	ExpectLateEarlyData [][]byte
 
-	// SendHalfRTTData causes a TLS 1.3 server to send the provided
-	// data in application data records before reading the client's
-	// Finished message.
-	SendHalfRTTData [][]byte
-
 	// ExpectHalfRTTData causes a TLS 1.3 client, if 0-RTT was accepted, to
 	// read application data after reading the server's Finished message and
 	// before sending any subsequent handshake messages. It checks that the
@@ -1691,7 +1715,8 @@ type ProtocolBugs struct {
 	SecondHelloRetryRequest bool
 
 	// SendHelloRetryRequestCurve, if non-zero, causes the server to send
-	// the specified curve in a HelloRetryRequest.
+	// the specified curve in a HelloRetryRequest, even if the client did
+	// not offer key shares at all.
 	SendHelloRetryRequestCurve CurveID
 
 	// SendHelloRetryRequestCipherSuite, if non-zero, causes the server to send
@@ -1748,6 +1773,21 @@ type ProtocolBugs struct {
 	// SendCustomCertificateRequest, if non-zero, send an additional custom
 	// extension in a TLS 1.3 CertificateRequest.
 	SendCustomCertificateRequest uint16
+
+	// AlwaysSendCertificateRequest, if true, causes the server to send
+	// CertificateRequest in TLS 1.3, even in handshakes where it is not
+	// allowed, such as resumption.
+	AlwaysSendCertificateRequest bool
+
+	// AlwaysSendCertificate, if true, causes the server to send Certificate in
+	// TLS 1.3, even in handshakes where it is not allowed, such as resumption.
+	AlwaysSendCertificate bool
+
+	// UseCertificateCredential, if not nil, is the credential to use as a
+	// server for TLS 1.3 Certificate and CertificateVerify messages. This may
+	// be used with AlwaysSendCertificate to authenticate with a certificate
+	// alongside some non-certificate credential.
+	UseCertificateCredential *Credential
 
 	// SendSNIWarningAlert, if true, causes the server to send an
 	// unrecognized_name alert before the ServerHello.
@@ -1833,8 +1873,10 @@ type ProtocolBugs struct {
 	MaxReceivePlaintext int
 
 	// ExpectPackedEncryptedHandshake, if non-zero, requires that the peer maximally
-	// pack their encrypted handshake messages, fitting at most the
-	// specified number of plaintext bytes per record.
+	// pack their encrypted handshake messages, fitting at most the specified number
+	// of bytes per record. In TLS, the limit counts plaintext bytes. In DTLS, it
+	// counts packet size and checks both that fragments are packed into records and
+	// records are packed into packets.
 	ExpectPackedEncryptedHandshake int
 
 	// SendTicketLifetime, if non-zero, is the ticket lifetime to send in
@@ -1907,6 +1949,14 @@ type ProtocolBugs struct {
 	// high-order bit.
 	SetX25519HighBit bool
 
+	// LowOrderX25519Point, if true, causes X25519 key shares to be a low
+	// order point.
+	LowOrderX25519Point bool
+
+	// MLKEMEncapKeyNotReduced, if true, causes the ML-KEM encapsulation key
+	// to not be fully reduced.
+	MLKEMEncapKeyNotReduced bool
+
 	// DuplicateCompressedCertAlgs, if true, causes two, equal, certificate
 	// compression algorithm IDs to be sent.
 	DuplicateCompressedCertAlgs bool
@@ -1950,9 +2000,9 @@ type ProtocolBugs struct {
 	// hello retry.
 	FailIfHelloRetryRequested bool
 
-	// FailedIfKyberOffered will cause a server to reject a ClientHello if Kyber
-	// is supported.
-	FailIfKyberOffered bool
+	// FailIfPostQuantumOffered will cause a server to reject a ClientHello if
+	// post-quantum curves are supported.
+	FailIfPostQuantumOffered bool
 
 	// ExpectKeyShares, if not nil, lists (in order) the curves that a ClientHello
 	// should have key shares for.
@@ -1962,12 +2012,54 @@ type ProtocolBugs struct {
 	// when running over QUIC.
 	CompatModeWithQUIC bool
 
+	// DTLS13EchoSessionID, if true, has DTLS 1.3 servers echo the client's
+	// session ID in the ServerHello.
+	DTLS13EchoSessionID bool
+
+	// DTLSUsePlaintextRecord header, if true, has DTLS 1.3 connections to use
+	// the DTLS 1.2 record header once the handshake completes. The bug is not
+	// activated during the handshake so that the handshake can complete first.
+	DTLSUsePlaintextRecordHeader bool
+
+	// DTLS13RecordHeaderSetCIDBit, if true, sets the Connection ID bit in
+	// the DTLS 1.3 record header.
+	DTLS13RecordHeaderSetCIDBit bool
+
 	// EncryptSessionTicketKey, if non-nil, is the ticket key to use when
 	// encrypting tickets.
 	EncryptSessionTicketKey *[32]byte
 
 	// OmitPublicName omits the server name extension from ClientHelloOuter.
 	OmitPublicName bool
+
+	// AllowEpochOverflow allows DTLS epoch numbers to wrap around.
+	AllowEpochOverflow bool
+
+	// SendPAKEInHelloRetryRequest causes the server to send a HelloRetryRequest
+	// message containing a PAKE extension.
+	SendPAKEInHelloRetryRequest bool
+
+	// UnsolicitedPAKE, if non-zero, causes a ServerHello to contain a PAKE
+	// response of the specified algorithm, even if the client didn't request it.
+	UnsolicitedPAKE uint16
+
+	// OfferExtraPAKEs, if not empty, is a list of additional PAKE algorithms to
+	// offer as a client. They cannot be negotiated and should be used in tests
+	// where the server is expected to ignore them.
+	OfferExtraPAKEs []uint16
+
+	// OfferExtraPAKEClientID and OfferExtraPAKEServerID are the PAKE client and
+	// server IDs to send with OfferExtraPAKEs. These may be left unset if
+	// configured with a real PAKE credential.
+	OfferExtraPAKEClientID []byte
+	OfferExtraPAKEServerID []byte
+
+	// TruncatePAKEMessage, if true, causes PAKE messages to be truncated.
+	TruncatePAKEMessage bool
+
+	// CheckClientHello is called on the initial ClientHello received from the
+	// peer, to implement extra checks.
+	CheckClientHello func(*clientHelloMsg) error
 }
 
 func (c *Config) serverInit() {
@@ -2035,10 +2127,6 @@ func (c *Config) maxVersion(isDTLS bool) uint16 {
 		ret = c.MaxVersion
 	}
 	if isDTLS {
-		// We only implement up to DTLS 1.2.
-		if ret > VersionTLS12 {
-			return VersionTLS12
-		}
 		// There is no such thing as DTLS 1.1.
 		if ret == VersionTLS11 {
 			return VersionTLS10
@@ -2047,7 +2135,7 @@ func (c *Config) maxVersion(isDTLS bool) uint16 {
 	return ret
 }
 
-var defaultCurvePreferences = []CurveID{CurveX25519Kyber768, CurveX25519, CurveP256, CurveP384, CurveP521}
+var defaultCurvePreferences = []CurveID{CurveX25519MLKEM768, CurveX25519Kyber768, CurveX25519, CurveP256, CurveP384, CurveP521}
 
 func (c *Config) curvePreferences() []CurveID {
 	if c == nil || len(c.CurvePreferences) == 0 {
@@ -2084,6 +2172,8 @@ func (c *Config) echCipherSuitePreferences() []HPKECipherSuite {
 func wireToVersion(vers uint16, isDTLS bool) (uint16, bool) {
 	if isDTLS {
 		switch vers {
+		case VersionDTLS13:
+			return VersionTLS13, true
 		case VersionDTLS12:
 			return VersionTLS12, true
 		case VersionDTLS10:
@@ -2141,6 +2231,7 @@ type CredentialType int
 const (
 	CredentialTypeX509 CredentialType = iota
 	CredentialTypeDelegated
+	CredentialTypeSPAKE2PlusV1
 )
 
 // A Credential is a certificate chain and private key that a TLS endpoint may
@@ -2180,6 +2271,19 @@ type Credential struct {
 	// SignSignatureAlgorithms, if not nil, overrides the default set of
 	// supported signature algorithms to sign with.
 	SignSignatureAlgorithms []signatureAlgorithm
+	// The following fields are used for PAKE credentials. For simplicity,
+	// we specify the password directly and expect the shim and runner to
+	// compute the client- and server-specific halves as needed.
+	PAKEContext  []byte
+	PAKEClientID []byte
+	PAKEServerID []byte
+	PAKEPassword []byte
+	// WrongPAKERole, if set, causes the shim to be configured with a
+	// credential of the wrong role.
+	WrongPAKERole bool
+	// OverridePAKECodepoint, if non-zero, causes the runner to send the
+	// specified value instead of the actual PAKE codepoint.
+	OverridePAKECodepoint uint16
 }
 
 func (c *Credential) WithSignatureAlgorithms(sigAlgs ...signatureAlgorithm) *Credential {
@@ -2205,13 +2309,6 @@ func (c *Credential) signatureAlgorithms() []signatureAlgorithm {
 		return c.SignatureAlgorithms
 	}
 	return supportedSignatureAlgorithms
-}
-
-// A TLS record.
-type record struct {
-	contentType  recordType
-	major, minor uint8
-	payload      []byte
 }
 
 type handshakeMessage interface {
