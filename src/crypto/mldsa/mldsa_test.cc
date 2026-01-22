@@ -14,6 +14,8 @@
 
 #include <openssl/mldsa.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -27,14 +29,16 @@
 #include "../internal.h"
 #include "../test/file_test.h"
 #include "../test/test_util.h"
+#include "../test/wycheproof_util.h"
 
 
+BSSL_NAMESPACE_BEGIN
 namespace {
 
 template <typename T>
 std::vector<uint8_t> Marshal(bcm_status (*marshal_func)(CBB *, const T *),
                              const T *t) {
-  bssl::ScopedCBB cbb;
+  ScopedCBB cbb;
   uint8_t *encoded;
   size_t encoded_len;
   if (!CBB_init(cbb.get(), 1) ||                             //
@@ -258,10 +262,9 @@ TEST(MLDSATest, SignatureVerifiesFromPrehash) {
   MLDSA65_prehash_update(&prehash_state, kMessage, sizeof(kMessage));
   uint8_t representative[MLDSA_MU_BYTES];
   MLDSA65_prehash_finalize(representative, &prehash_state);
-  EXPECT_EQ(MLDSA65_verify_message_representative(pub.get(),
-                                                  encoded_signature.data(),
-                                                  encoded_signature.size(),
-                                                  representative),
+  EXPECT_EQ(MLDSA65_verify_message_representative(
+                pub.get(), encoded_signature.data(), encoded_signature.size(),
+                representative),
             1);
 
   // Updating in multiple chunks also works.
@@ -273,10 +276,9 @@ TEST(MLDSATest, SignatureVerifiesFromPrehash) {
       MLDSA65_prehash_update(&prehash_state, kMessage + j,
                              sizeof(kMessage) - j);
       MLDSA65_prehash_finalize(representative, &prehash_state);
-      EXPECT_EQ(MLDSA65_verify_message_representative(pub.get(),
-                                                      encoded_signature.data(),
-                                                      encoded_signature.size(),
-                                                      representative),
+      EXPECT_EQ(MLDSA65_verify_message_representative(
+                    pub.get(), encoded_signature.data(),
+                    encoded_signature.size(), representative),
                 1);
     }
   }
@@ -310,13 +312,12 @@ TEST(MLDSATest, InvalidPublicKeyEncodingLength) {
       MLDSA65_generate_key(encoded_public_key.data(), seed, priv.get()));
 
   // Public key is 1 byte too short.
-  CBS cbs =
-      CBS(bssl::Span(encoded_public_key).first(MLDSA65_PUBLIC_KEY_BYTES - 1));
+  CBS cbs = CBS(Span(encoded_public_key).first(MLDSA65_PUBLIC_KEY_BYTES - 1));
   auto parsed_pub = std::make_unique<MLDSA65_public_key>();
   EXPECT_FALSE(MLDSA65_parse_public_key(parsed_pub.get(), &cbs));
 
   // Public key has the correct length.
-  cbs = CBS(bssl::Span(encoded_public_key).first(MLDSA65_PUBLIC_KEY_BYTES));
+  cbs = CBS(Span(encoded_public_key).first(MLDSA65_PUBLIC_KEY_BYTES));
   EXPECT_TRUE(MLDSA65_parse_public_key(parsed_pub.get(), &cbs));
 
   // Public key is 1 byte too long.
@@ -537,6 +538,80 @@ TEST(MLDSATest, WycheproofSignTests44) {
           MLDSA44_SIGNATURE_BYTES, BCM_mldsa44_sign_internal>);
 }
 
+template <typename PrivateKey,
+          bcm_status_t (*PrivateKeyFromSeed)(PrivateKey *,
+                                             const uint8_t[MLDSA_SEED_BYTES]),
+          size_t SignatureBytes,
+          bcm_status_t (*SignInternal)(uint8_t *, const PrivateKey *,
+                                       const uint8_t *, size_t, const uint8_t *,
+                                       size_t, const uint8_t *, size_t,
+                                       const uint8_t *)>
+void MLDSASigGenFromSeedTest(FileTest *t) {
+  std::vector<uint8_t> private_seed_bytes, msg, expected_signature, context;
+  ASSERT_TRUE(t->GetInstructionBytes(&private_seed_bytes, "privateSeed"));
+  ASSERT_TRUE(t->GetBytes(&msg, "msg"));
+  ASSERT_TRUE(t->GetBytes(&expected_signature, "sig"));
+  EXPECT_EQ(private_seed_bytes.size(), static_cast<size_t>(MLDSA_SEED_BYTES));
+  if (t->HasAttribute("ctx")) {
+    t->GetBytes(&context, "ctx");
+  }
+  WycheproofResult result;
+  ASSERT_TRUE(GetWycheproofResult(t, &result));
+  t->IgnoreInstruction("privateKeyPkcs8");
+  t->IgnoreAttribute("flags");
+
+  auto priv = std::make_unique<PrivateKey>();
+
+  // Unfortunately we need to reimplement the context length check here because
+  // we are using the internal function in order to pass in an all-zero
+  // randomizer.
+  const int ok = bcm_success(PrivateKeyFromSeed(
+                     priv.get(), private_seed_bytes.data())) == 1 &&
+                 (context.size() <= 255);
+
+  int expected_valid =
+      result.IsValid({"ValidSignature", "ManySteps", "BoundaryCondition"}) ? 1
+                                                                           : 0;
+  EXPECT_EQ(ok, expected_valid);
+  if (!expected_valid) {
+    return;
+  }
+
+  const uint8_t zero_randomizer[BCM_MLDSA_SIGNATURE_RANDOMIZER_BYTES] = {0};
+  std::vector<uint8_t> signature(SignatureBytes);
+  const uint8_t context_prefix[2] = {0, static_cast<uint8_t>(context.size())};
+  EXPECT_TRUE(bcm_success(SignInternal(signature.data(), priv.get(), msg.data(),
+                                       msg.size(), context_prefix,
+                                       sizeof(context_prefix), context.data(),
+                                       context.size(), zero_randomizer)));
+
+  EXPECT_EQ(Bytes(signature), Bytes(expected_signature));
+}
+
+TEST(MLDSATest, WycheproofSignWithSeedTests44) {
+  FileTestGTest(
+      "third_party/wycheproof_testvectors/mldsa_44_sign_seed_test.txt",
+      MLDSASigGenFromSeedTest<
+          MLDSA44_private_key, BCM_mldsa44_private_key_from_seed,
+          MLDSA44_SIGNATURE_BYTES, BCM_mldsa44_sign_internal>);
+}
+
+TEST(MLDSATest, WycheproofSignWithSeedTests65) {
+  FileTestGTest(
+      "third_party/wycheproof_testvectors/mldsa_65_sign_seed_test.txt",
+      MLDSASigGenFromSeedTest<
+          MLDSA65_private_key, BCM_mldsa65_private_key_from_seed,
+          MLDSA65_SIGNATURE_BYTES, BCM_mldsa65_sign_internal>);
+}
+
+TEST(MLDSATest, WycheproofSignWithSeedTests87) {
+  FileTestGTest(
+      "third_party/wycheproof_testvectors/mldsa_87_sign_seed_test.txt",
+      MLDSASigGenFromSeedTest<
+          MLDSA87_private_key, BCM_mldsa87_private_key_from_seed,
+          MLDSA87_SIGNATURE_BYTES, BCM_mldsa87_sign_internal>);
+}
+
 template <typename PublicKey, size_t SignatureLength,
           int (*ParsePublicKey)(PublicKey *, CBS *),
           int (*Verify)(const PublicKey *, const uint8_t *, size_t,
@@ -636,3 +711,4 @@ TEST(MLDSATest, NullptrArgumentsToCreate) {
 }
 
 }  // namespace
+BSSL_NAMESPACE_END

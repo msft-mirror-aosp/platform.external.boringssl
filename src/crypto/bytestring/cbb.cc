@@ -24,6 +24,8 @@
 #include "../internal.h"
 
 
+using namespace bssl;
+
 void CBB_zero(CBB *cbb) { OPENSSL_memset(cbb, 0, sizeof(CBB)); }
 
 static void cbb_init(CBB *cbb, uint8_t *buf, size_t cap, int can_resize) {
@@ -636,6 +638,38 @@ int CBB_add_asn1_oid_from_text(CBB *cbb, const char *text, size_t len) {
   }
 
   return 1;
+}
+
+int CBB_add_asn1_relative_oid_from_text(CBB *cbb, const char *text,
+                                        size_t len) {
+  if (!CBB_flush(cbb)) {
+    return 0;
+  }
+
+  // Relative OIDs must have at least one component.
+  if (!len) {
+    return 0;
+  }
+
+  CBS cbs;
+  CBS_init(&cbs, reinterpret_cast<const uint8_t *>(text), len);
+
+  while (CBS_len(&cbs) > 0) {
+    uint64_t a;
+    if (!parse_dotted_decimal(&cbs, &a) || !add_base128_integer(cbb, a)) {
+      return 0;
+    }
+  }
+
+  return 1;
+}
+
+int CBB_add_asn1_oid_component(CBB *cbb, uint64_t value) {
+  if (!CBB_flush(cbb)) {
+    return 0;
+  }
+
+  return add_base128_integer(cbb, value);
 }
 
 static int compare_set_of_element(const void *a_ptr, const void *b_ptr) {

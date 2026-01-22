@@ -159,7 +159,7 @@ func convertWycheproof(f io.Writer, jsonPath string) error {
 			if _, err := fmt.Fprintf(f, "# tcId = %d\n", int(test["tcId"].(float64))); err != nil {
 				return err
 			}
-			if comment, ok := test["comment"]; ok && len(comment.(string)) != 0 {
+			if comment, ok := test["comment"]; ok && comment.(string) != "" {
 				if err := printComment(f, comment.(string)); err != nil {
 					return err
 				}
@@ -289,10 +289,13 @@ var defaultInputs = []string{
 	"x25519_test.json",
 	"xchacha20_poly1305_test.json",
 	"mldsa_44_sign_noseed_test.json",
+	"mldsa_44_sign_seed_test.json",
 	"mldsa_44_verify_test.json",
 	"mldsa_65_sign_noseed_test.json",
+	"mldsa_65_sign_seed_test.json",
 	"mldsa_65_verify_test.json",
 	"mldsa_87_sign_noseed_test.json",
+	"mldsa_87_sign_seed_test.json",
 	"mldsa_87_verify_test.json",
 	// TODO(crbug.com/42290453): Enable ML-KEM-768 and ML-KEM-1024 tests
 	// "mlkem_768_test.json",
