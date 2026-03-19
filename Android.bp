@@ -58,7 +58,6 @@ cc_defaults {
     cppflags: [
         "-Wall",
         "-Werror",
-        "-std=c++17",
     ],
 
     // Build BoringSSL and its tests against the same STL.
@@ -867,6 +866,8 @@ rust_defaults {
         "//system/gatekeeper/rust/boringssl",
         "//system/keymint/boringssl",
         "//system/security/prng_seeder",
+        // [POC: vikramgaur@, bug component id: 1424296]
+        "//tools/security/remote_provisioning/hwtrust",
     ],
     srcs: [
         "src/rust/bssl-sys/src/lib.rs",
