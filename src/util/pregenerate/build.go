@@ -196,7 +196,7 @@ func writeHeader(b *bytes.Buffer, comment string) {
 }
 
 func buildVariablesTask(targets map[string]build.Target, dst, comment string, writeVariable func(b *bytes.Buffer, name string, val []string)) *Task {
-	return NewSimpleTask(dst, func() ([]byte, error) {
+	return NewSimpleTask("sources", dst, func() ([]byte, error) {
 		var b bytes.Buffer
 		writeHeader(&b, comment)
 
@@ -265,13 +265,13 @@ func writeGNVariable(b *bytes.Buffer, name string, val []string) {
 }
 
 func jsonTask(targets map[string]build.Target, dst string) *Task {
-	return NewSimpleTask(dst, func() ([]byte, error) {
+	return NewSimpleTask("sources", dst, func() ([]byte, error) {
 		return json.MarshalIndent(targets, "", "  ")
 	})
 }
 
 func soongTask(targets map[string]build.Target, dst string) *Task {
-	return NewSimpleTask(dst, func() ([]byte, error) {
+	return NewSimpleTask("sources", dst, func() ([]byte, error) {
 		var b bytes.Buffer
 		writeHeader(&b, "//")
 
@@ -329,8 +329,16 @@ func MakeBuildFiles(targets map[string]build.Target) []*Task {
 	}
 }
 
-// addGeneratedHeader adds a generated `header` to `targetsOut`.
-func addGeneratedHeader(targetsOut map[string]build.Target, header string) {
+// addGeneratedPublicHeader adds a generated public `header` to `targetsOut`.
+func addGeneratedPublicHeader(targetsOut map[string]build.Target, header string) {
+	target := targetsOut["crypto"]
+	target.Hdrs = append(target.Hdrs, header)
+	slices.Sort(target.Hdrs)
+	targetsOut["crypto"] = target
+}
+
+// addGeneratedInternalHeader adds a generated internal `header` to `targetsOut`.
+func addGeneratedInternalHeader(targetsOut map[string]build.Target, header string) {
 	target := targetsOut["crypto"]
 	target.InternalHdrs = append(target.InternalHdrs, header)
 	slices.Sort(target.InternalHdrs)
@@ -339,43 +347,50 @@ func addGeneratedHeader(targetsOut map[string]build.Target, header string) {
 
 // Construct a task to collect assembly global symbols into the file "gen/asm.syms".
 // This task should only run after all the `PerlAsmTask`s in `perlAsmTasks` complete.
-func MakeCollectAsmGlobalTasks(perlAsmTasks []*Task, allAsmSrcs []string) []*Task {
+func MakeCollectAsmGlobalTasks(perlAsmTasks []*Task, allAsmSrcs []string, targetsOut map[string]build.Target) []*Task {
 	var syms []string
 	var err error
-	buildIncludesOnce := func() {
+	buildHeadersOnce := func() {
 		syms, err = CollectAsmGlobals(allAsmSrcs)
 	}
 	var once sync.Once
+	addGeneratedInternalHeader(targetsOut, "include/openssl/prefix_symbols_internal_c.h")
+	addGeneratedInternalHeader(targetsOut, "include/openssl/prefix_symbols_internal_S.h")
+	addGeneratedInternalHeader(targetsOut, "gen/boringssl_prefix_symbols_internal_x86_win_asm.inc")
+	addGeneratedInternalHeader(targetsOut, "gen/boringssl_prefix_symbols_internal_x86_64_win_asm.inc")
 	return []*Task{
-		NewSimpleTask("gen/boringssl_prefix_symbols_internal_c.inc", func() ([]byte, error) {
-			once.Do(buildIncludesOnce)
-			return BuildAsmGlobalsCInclude(syms), err
+		NewSimpleTask("prefix_symbols_internal", "include/openssl/prefix_symbols_internal_c.h", func() ([]byte, error) {
+			once.Do(buildHeadersOnce)
+			return BuildAsmGlobalsCHeader(syms), err
 		}, perlAsmTasks...),
-		NewSimpleTask("gen/boringssl_prefix_symbols_internal_S.inc", func() ([]byte, error) {
-			once.Do(buildIncludesOnce)
-			return BuildAsmGlobalsGasInclude(syms), err
+		NewSimpleTask("prefix_symbols_internal", "include/openssl/prefix_symbols_internal_S.h", func() ([]byte, error) {
+			once.Do(buildHeadersOnce)
+			return BuildAsmGlobalsGasHeader(syms), err
 		}, perlAsmTasks...),
-		NewSimpleTask("gen/boringssl_prefix_symbols_internal_x86_asm.inc", func() ([]byte, error) {
-			once.Do(buildIncludesOnce)
-			return BuildAsmGlobalsNasmX86Include(syms), err
+		NewSimpleTask("prefix_symbols_internal", "gen/boringssl_prefix_symbols_internal_x86_win_asm.inc", func() ([]byte, error) {
+			once.Do(buildHeadersOnce)
+			return BuildAsmGlobalsNasmX86Header(syms), err
 		}, perlAsmTasks...),
-		NewSimpleTask("gen/boringssl_prefix_symbols_internal_x86_64_asm.inc", func() ([]byte, error) {
-			once.Do(buildIncludesOnce)
-			return BuildAsmGlobalsNasmX8664Include(syms), err
+		NewSimpleTask("prefix_symbols_internal", "gen/boringssl_prefix_symbols_internal_x86_64_win_asm.inc", func() ([]byte, error) {
+			once.Do(buildHeadersOnce)
+			return BuildAsmGlobalsNasmX8664Header(syms), err
 		}, perlAsmTasks...),
 	}
 }
 
 // MakePrefixingIncludes returns the tasks to generate the header files for symbol prefixing.
 func MakePrefixingIncludes(in map[string]InputTarget, targetsOut map[string]build.Target) []*Task {
-	var headers []string
-	for _, t := range in {
-		headers = append(headers, t.Hdrs...)
-	}
-	addGeneratedHeader(targetsOut, "include/openssl/prefix_symbols.h")
+	addGeneratedPublicHeader(targetsOut, "include/openssl/prefix_symbols.h")
 	return []*Task{
-		NewSimpleTask("include/openssl/prefix_symbols.h", func() ([]byte, error) {
-			return BuildCRenamingHeader(headers)
+		NewSimpleTask("prefix_symbols", "include/openssl/prefix_symbols.h", func() ([]byte, error) {
+			var headers []string
+			for _, t := range in {
+				if t.PrefixSymbols {
+					headers = append(headers, t.Hdrs...)
+				}
+			}
+			syms, err := CollectCSymbols(headers)
+			return BuildCRenamingInclude(syms), err
 		}),
 	}
 }
