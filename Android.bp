@@ -355,7 +355,6 @@ cc_library_static {
         "//bootable/recovery/updater",
         "//bootable/deprecated-ota/updater",
         "//external/conscrypt",
-        "//external/python/cpython2",
         "//external/rust/android-crates-io/crates/quiche",
         // Strictly, only the *static* toybox for legacy devices should have
         // access to libcrypto_static, but we can't express that.
@@ -413,7 +412,6 @@ cc_library_static {
         "//external/avb:__subpackages__",
         "//external/open-dice",
         "//packages/modules/Virtualization:__subpackages__",
-        "//system/security/diced/open_dice",
     ],
 
     // b/336916369: This library gets linked into a rust rlib.  Disable LTO
