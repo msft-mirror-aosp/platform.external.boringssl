@@ -216,6 +216,9 @@ bootstrap_go_package {
     srcs: [
         "src/util/ar/ar.go",
     ],
+    testData: [
+        "src/util/ar/testdata/**/*",
+    ],
     testSrcs: [
         "src/util/ar/ar_test.go",
     ],
