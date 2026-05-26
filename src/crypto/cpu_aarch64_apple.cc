@@ -63,12 +63,13 @@ void bssl::OPENSSL_cpuid_setup() {
   // available in macOS 12. For compatibility with macOS 11, we also support
   // the old names. The old names don't have values for features like FEAT_AES,
   // so instead we detect them statically above.
-  //
-  // If querying new sysctls, update the Chromium sandbox definition. See
-  // https://crrev.com/c/4415225.
   if (has_hw_feature("hw.optional.arm.FEAT_SHA512") ||
       has_hw_feature("hw.optional.armv8_2_sha512")) {
     OPENSSL_armcap_P |= ARMV8_SHA512;
+  }
+  if (has_hw_feature("hw.optional.arm.FEAT_SHA3") ||
+      has_hw_feature("hw.optional.armv8_2_sha3")) {
+    OPENSSL_armcap_P |= ARMV8_SHA3;
   }
 }
 
