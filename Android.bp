@@ -980,10 +980,11 @@ rust_library {
     product_available: true,
 }
 
+// TODO: right after this roll, move the downstream crates
+// to use the main `crypto` crate directly.
 rust_library {
     name: "libbssl_crypto_mlalgs",
     defaults: ["libbssl_crypto_defaults"],
-    features: ["mlalgs"],
     host_supported: true,
     apex_available: [
         "//apex_available:platform",
