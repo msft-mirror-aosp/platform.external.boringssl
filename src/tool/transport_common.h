@@ -18,7 +18,10 @@
 #include <openssl/ssl.h>
 #include <string.h>
 
+#include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 
 BSSL_NAMESPACE_BEGIN
@@ -51,6 +54,15 @@ class Listener {
 };
 
 bool VersionFromString(uint16_t *out_version, const std::string &version);
+
+// CertificateTypesFromString parses a comma-separated list of certificate types
+// ("rpk" for Raw Public Keys, "x509" for X.509 certificates) and returns a
+// vector containing the corresponding certificate type values, or nullopt on
+// parsing error.
+std::optional<std::vector<uint8_t>> CertificateTypesFromString(
+    std::string_view s);
+
+std::optional<std::vector<uint8_t>> DecodeHex(std::string_view hex);
 
 void PrintConnectionInfo(BIO *bio, const SSL *ssl);
 

@@ -55,7 +55,6 @@ fips_fragments = [
     "src/crypto/fipsmodule/ec/ec_montgomery.cc.inc",
     "src/crypto/fipsmodule/ec/felem.cc.inc",
     "src/crypto/fipsmodule/ec/oct.cc.inc",
-    "src/crypto/fipsmodule/ec/p224-64.cc.inc",
     "src/crypto/fipsmodule/ec/p256-nistz.cc.inc",
     "src/crypto/fipsmodule/ec/p256.cc.inc",
     "src/crypto/fipsmodule/ec/scalar.cc.inc",
@@ -199,6 +198,7 @@ crypto_headers = [
     "src/include/openssl/opensslconf.h",
     "src/include/openssl/opensslv.h",
     "src/include/openssl/ossl_typ.h",
+    "src/include/openssl/params.h",
     "src/include/openssl/pem.h",
     "src/include/openssl/pkcs12.h",
     "src/include/openssl/pkcs7.h",
@@ -206,6 +206,7 @@ crypto_headers = [
     "src/include/openssl/poly1305.h",
     "src/include/openssl/pool.h",
     "src/include/openssl/posix_time.h",
+    "src/include/openssl/prefix_symbols.h",
     "src/include/openssl/rand.h",
     "src/include/openssl/rc4.h",
     "src/include/openssl/ripemd.h",
@@ -232,6 +233,7 @@ crypto_headers = [
 ]
 
 crypto_internal_headers = [
+    "src/crypto/armv8_feature_parsing.h",
     "src/crypto/asn1/internal.h",
     "src/crypto/bcm_support.h",
     "src/crypto/bio/internal.h",
@@ -282,18 +284,21 @@ crypto_internal_headers = [
     "src/crypto/md5/internal.h",
     "src/crypto/mem_internal.h",
     "src/crypto/obj/obj_dat.h",
+    "src/crypto/params_internal.h",
     "src/crypto/pem/internal.h",
     "src/crypto/pkcs7/internal.h",
     "src/crypto/pkcs8/internal.h",
     "src/crypto/poly1305/internal.h",
     "src/crypto/pool/internal.h",
-    "src/crypto/rand/getrandom_fillin.h",
     "src/crypto/rand/internal.h",
     "src/crypto/rsa/internal.h",
     "src/crypto/spake2plus/internal.h",
     "src/crypto/trust_token/internal.h",
     "src/crypto/x509/internal.h",
-    "src/include/openssl/prefix_symbols.h",
+    "src/gen/boringssl_prefix_symbols_internal_x86_64_win_asm.inc",
+    "src/gen/boringssl_prefix_symbols_internal_x86_win_asm.inc",
+    "src/include/openssl/prefix_symbols_internal_S.h",
+    "src/include/openssl/prefix_symbols_internal_c.h",
     "src/third_party/fiat/bedrock_unverified_bareminimum.c.inc",
     "src/third_party/fiat/bedrock_unverified_platform.c.inc",
     "src/third_party/fiat/curve25519_32.h",
@@ -407,14 +412,17 @@ crypto_sources = [
     "src/crypto/evp/evp.cc",
     "src/crypto/evp/evp_asn1.cc",
     "src/crypto/evp/evp_ctx.cc",
+    "src/crypto/evp/evp_kem.cc",
     "src/crypto/evp/p_dh.cc",
     "src/crypto/evp/p_dsa.cc",
     "src/crypto/evp/p_ec.cc",
     "src/crypto/evp/p_ed25519.cc",
     "src/crypto/evp/p_hkdf.cc",
     "src/crypto/evp/p_mldsa.cc",
+    "src/crypto/evp/p_mlkem.cc",
     "src/crypto/evp/p_rsa.cc",
     "src/crypto/evp/p_x25519.cc",
+    "src/crypto/evp/p_xwing.cc",
     "src/crypto/evp/pbkdf.cc",
     "src/crypto/evp/print.cc",
     "src/crypto/evp/scrypt.cc",
@@ -844,6 +852,23 @@ rust_bssl_crypto = [
     "src/rust/bssl-crypto/src/test_helpers.rs",
     "src/rust/bssl-crypto/src/tls12_prf.rs",
     "src/rust/bssl-crypto/src/x25519.rs",
+]
+
+rust_bssl_macros = [
+    "src/rust/bssl-macros/src/lib.rs",
+]
+
+rust_bssl_x509 = [
+    "src/rust/bssl-x509/src/certificates.rs",
+    "src/rust/bssl-x509/src/errors.rs",
+    "src/rust/bssl-x509/src/ffi.rs",
+    "src/rust/bssl-x509/src/keys.rs",
+    "src/rust/bssl-x509/src/lib.rs",
+    "src/rust/bssl-x509/src/oids.rs",
+    "src/rust/bssl-x509/src/params.rs",
+    "src/rust/bssl-x509/src/store.rs",
+    "src/rust/bssl-x509/src/tests.rs",
+    "src/rust/bssl-x509/src/verify.rs",
 ]
 
 tool_sources = [

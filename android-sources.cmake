@@ -114,14 +114,17 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/evp/evp.cc
   ${BORINGSSL_ROOT}src/crypto/evp/evp_asn1.cc
   ${BORINGSSL_ROOT}src/crypto/evp/evp_ctx.cc
+  ${BORINGSSL_ROOT}src/crypto/evp/evp_kem.cc
   ${BORINGSSL_ROOT}src/crypto/evp/p_dh.cc
   ${BORINGSSL_ROOT}src/crypto/evp/p_dsa.cc
   ${BORINGSSL_ROOT}src/crypto/evp/p_ec.cc
   ${BORINGSSL_ROOT}src/crypto/evp/p_ed25519.cc
   ${BORINGSSL_ROOT}src/crypto/evp/p_hkdf.cc
   ${BORINGSSL_ROOT}src/crypto/evp/p_mldsa.cc
+  ${BORINGSSL_ROOT}src/crypto/evp/p_mlkem.cc
   ${BORINGSSL_ROOT}src/crypto/evp/p_rsa.cc
   ${BORINGSSL_ROOT}src/crypto/evp/p_x25519.cc
+  ${BORINGSSL_ROOT}src/crypto/evp/p_xwing.cc
   ${BORINGSSL_ROOT}src/crypto/evp/pbkdf.cc
   ${BORINGSSL_ROOT}src/crypto/evp/print.cc
   ${BORINGSSL_ROOT}src/crypto/evp/scrypt.cc
@@ -575,12 +578,12 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/x509/x509_time_test.cc
   ${BORINGSSL_ROOT}src/crypto/xwing/xwing_test.cc
   ${BORINGSSL_ROOT}src/third_party/fiat/bedrock_platform_test.cc
-  ${BORINGSSL_ROOT}src/third_party/fiat/bedrock_polyfill_platform.c.inc
 )
 set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/blake2/blake2b256_tests.txt
   ${BORINGSSL_ROOT}src/crypto/cipher/test/aes_128_cbc_sha1_tls_implicit_iv_tests.txt
   ${BORINGSSL_ROOT}src/crypto/cipher/test/aes_128_cbc_sha1_tls_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/cipher/test/aes_128_cbc_sha256_tls_tests.txt
   ${BORINGSSL_ROOT}src/crypto/cipher/test/aes_128_ccm_bluetooth_8_tests.txt
   ${BORINGSSL_ROOT}src/crypto/cipher/test/aes_128_ccm_bluetooth_tests.txt
   ${BORINGSSL_ROOT}src/crypto/cipher/test/aes_128_ccm_matter_tests.txt
@@ -619,9 +622,11 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/evp/test/ed25519_tests.txt
   ${BORINGSSL_ROOT}src/crypto/evp/test/evp_tests.txt
   ${BORINGSSL_ROOT}src/crypto/evp/test/mldsa_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/evp/test/mlkem_tests.txt
   ${BORINGSSL_ROOT}src/crypto/evp/test/rsa_tests.txt
   ${BORINGSSL_ROOT}src/crypto/evp/test/scrypt_tests.txt
   ${BORINGSSL_ROOT}src/crypto/evp/test/x25519_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/evp/test/xwing_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/aes/aes_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/exp_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/test/gcd_tests.txt
@@ -647,6 +652,7 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/rand/ctrdrbg_vectors.txt
   ${BORINGSSL_ROOT}src/crypto/hmac/hmac_tests.txt
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test_vectors.txt
+  ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test_vectors_pq.txt
   ${BORINGSSL_ROOT}src/crypto/kyber/kyber_tests.txt
   ${BORINGSSL_ROOT}src/crypto/mldsa/mldsa_nist_keygen_44_tests.txt
   ${BORINGSSL_ROOT}src/crypto/mldsa/mldsa_nist_keygen_65_tests.txt
@@ -667,10 +673,12 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/nss.p7c
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/openssl_crl.p7c
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/sign_cert.pem
+  ${BORINGSSL_ROOT}src/crypto/pkcs7/test/sign_cert2.pem
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/sign_key.pem
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/sign_sha1.p7s
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/sign_sha1_key_id.p7s
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/sign_sha256.p7s
+  ${BORINGSSL_ROOT}src/crypto/pkcs7/test/sign_sha256_cert2.p7s
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/sign_sha256_key_id.p7s
   ${BORINGSSL_ROOT}src/crypto/pkcs7/test/windows.p7c
   ${BORINGSSL_ROOT}src/crypto/pkcs8/test/bad1.p12

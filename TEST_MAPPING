@@ -25,6 +25,30 @@
     },
     {
       "name": "hwtrust_boringssl_tests"
+    },
+    {
+      "name": "CtsInitTestCases"
+    },
+    {
+      "name": "CtsFsMgrTestCases"
+    },
+    {
+      "name": "quiche_device_test_src_lib"
+    },
+    {
+      "name": "toybox-tests"
+    },
+    {
+      "name": "libvintf_test"
+    },
+    {
+      "name": "librkp_factory_extraction_test"
+    },
+    {
+      "name": "libgk_boringssl_test"
+    },
+    {
+      "name": "libkmr_crypto_boring_test"
     }
   ],
   "postsubmit": [

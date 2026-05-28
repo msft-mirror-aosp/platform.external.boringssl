@@ -216,6 +216,9 @@ bootstrap_go_package {
     srcs: [
         "src/util/ar/ar.go",
     ],
+    testData: [
+        "src/util/ar/testdata/**/*",
+    ],
     testSrcs: [
         "src/util/ar/ar_test.go",
     ],
@@ -871,6 +874,9 @@ rust_defaults {
         "src/rust/bssl-sys/src/lib.rs",
         ":libbssl_sys_raw",
     ],
+    rustlibs: [
+        "libbssl_macros",
+    ],
     // Because the bindgen bindings are src included,
     // we need to redeclare the staticfns dependency
     whole_static_libs: [
@@ -927,6 +933,9 @@ rust_library_rlib {
         ":libbssl_sys_src_nostd",
         ":libbssl_sys_raw_nostd",
     ],
+    rlibs: [
+        "libbssl_macros_nostd",
+    ],
     prefer_rlib: true,
     no_stdlibs: true,
     stdlibs: [
@@ -971,10 +980,11 @@ rust_library {
     product_available: true,
 }
 
+// TODO: right after this roll, move the downstream crates
+// to use the main `crypto` crate directly.
 rust_library {
     name: "libbssl_crypto_mlalgs",
     defaults: ["libbssl_crypto_defaults"],
-    features: ["mlalgs"],
     host_supported: true,
     apex_available: [
         "//apex_available:platform",
@@ -996,4 +1006,44 @@ dirgroup {
     name: "trusty_dirgroup_external_boringssl",
     dirs: ["."],
     visibility: ["//trusty/vendor/google/aosp/scripts"],
+}
+
+
+genrule {
+    name: "libbssl_macros_src_nostd",
+    srcs: ["src/rust/bssl-macros/src/lib.rs"],
+    out: ["lib.rs"],
+    cmd: "(echo '#![no_std]' && cat $(in)) > $(out)",
+}
+
+rust_library_rlib {
+    name: "libbssl_macros",
+    crate_name: "bssl_macros",
+    srcs: ["src/rust/bssl-macros/src/lib.rs"],
+    edition: "2021",
+    host_supported: true,
+    vendor_available: true,
+    product_available: true,
+    min_sdk_version: "29",
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.compos",
+        "com.android.configinfrastructure",
+        "com.android.virt",
+    ],
+}
+
+rust_library_rlib {
+    name: "libbssl_macros_nostd",
+    crate_name: "bssl_macros",
+    srcs: [":libbssl_macros_src_nostd"],
+    edition: "2021",
+    apex_available: [
+        "com.android.compos",
+    ],
+    no_stdlibs: true,
+    stdlibs: [
+        "libcompiler_builtins.rust_sysroot",
+        "libcore.rust_sysroot",
+    ],
 }
