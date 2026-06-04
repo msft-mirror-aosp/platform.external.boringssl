@@ -2,12 +2,16 @@
 import /vendor/etc/boringssl_self_test.${ro.zygote}.rc
 
 service boringssl_self_test32_vendor /vendor/bin/boringssl_self_test32
+    oneshot
+    disabled
     setenv BORINGSSL_SELF_TEST_CREATE_FLAG true # Any nonempty value counts as true
     reboot_on_failure reboot,boringssl-self-check-failed
     stdio_to_kmsg
     user root
 
 service boringssl_self_test64_vendor /vendor/bin/boringssl_self_test64
+    oneshot
+    disabled
     setenv BORINGSSL_SELF_TEST_CREATE_FLAG true # Any nonempty value counts as true
     reboot_on_failure reboot,boringssl-self-check-failed
     stdio_to_kmsg
