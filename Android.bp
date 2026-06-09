@@ -767,6 +767,7 @@ rust_bindgen {
     wrapper_src: "src/rust/bssl-sys/wrapper.h",
     vendor_available: true,
     product_available: true,
+    ota_recovery_ramdisk_available: true,
     bindgen_flags: libbssl_sys_raw_flags,
     shared_libs: [
         "libcrypto",
@@ -790,6 +791,7 @@ cc_library_static {
     local_include_dirs: ["include/"],
     host_supported: true,
     vendor_available: true,
+    ota_recovery_ramdisk_available: true,
     product_available: true,
     min_sdk_version: "29",
     apex_available: [
@@ -884,6 +886,7 @@ rust_defaults {
     ],
     vendor_available: true,
     product_available: true,
+    ota_recovery_ramdisk_available: true,
 }
 
 rust_defaults {
@@ -1008,7 +1011,6 @@ dirgroup {
     visibility: ["//trusty/vendor/google/aosp/scripts"],
 }
 
-
 genrule {
     name: "libbssl_macros_src_nostd",
     srcs: ["src/rust/bssl-macros/src/lib.rs"],
@@ -1024,6 +1026,7 @@ rust_library_rlib {
     host_supported: true,
     vendor_available: true,
     product_available: true,
+    ota_recovery_ramdisk_available: true,
     min_sdk_version: "29",
     apex_available: [
         "//apex_available:platform",
