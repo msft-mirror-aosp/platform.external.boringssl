@@ -15,8 +15,10 @@
 #ifndef OPENSSL_HEADER_CRYPTO_INTERNAL_H
 #define OPENSSL_HEADER_CRYPTO_INTERNAL_H
 
+#include <openssl/base.h>
 #include <openssl/crypto.h>
 #include <openssl/ex_data.h>
+#include <openssl/span.h>
 #include <openssl/stack.h>
 
 #include <assert.h>
@@ -56,6 +58,10 @@
 
 #if defined(_M_X64) || defined(_M_IX86)
 #include "intrin.h"
+#endif
+
+#if defined(BORINGSSL_PREFIX)
+#include <openssl/prefix_symbols_internal_c.h>  // IWYU pragma: export
 #endif
 
 
@@ -169,8 +175,8 @@ inline void OPENSSL_enable_malloc_failures_for_testing() {}
 // Pointer utility functions.
 
 // buffers_alias returns one if |a| and |b| alias and zero otherwise.
-static inline int buffers_alias(const void *a, size_t a_bytes, const void *b,
-                                size_t b_bytes) {
+inline int buffers_alias(const void *a, size_t a_bytes, const void *b,
+                         size_t b_bytes) {
   // Cast |a| and |b| to integers. In C, pointer comparisons between unrelated
   // objects are undefined whereas pointer to integer conversions are merely
   // implementation-defined. We assume the implementation defined it in a sane
@@ -180,10 +186,17 @@ static inline int buffers_alias(const void *a, size_t a_bytes, const void *b,
   return a_u + a_bytes > b_u && b_u + b_bytes > a_u;
 }
 
+// spans_alias returns one if |a| and |b| alias, and zero otherwise.
+template <typename T>
+inline int spans_alias(Span<const T> a, Span<const T> b) {
+  return buffers_alias(a.data(), a.size() * sizeof(T), b.data(),
+                       b.size() * sizeof(T));
+}
+
 // align_pointer returns |ptr|, advanced to |alignment|. |alignment| must be a
 // power of two, and |ptr| must have at least |alignment - 1| bytes of scratch
 // space.
-static inline void *align_pointer(void *ptr, size_t alignment) {
+inline void *align_pointer(void *ptr, size_t alignment) {
   // |alignment| must be a power of two.
   assert(alignment != 0 && (alignment & (alignment - 1)) == 0);
   // Instead of aligning |ptr| as a |uintptr_t| and casting back, compute the
@@ -241,7 +254,7 @@ typedef uint32_t crypto_word_t;
 // Note the compiler is aware that |value_barrier_w| has no side effects and
 // always has the same output for a given input. This allows it to eliminate
 // dead code, move computations across loops, and vectorize.
-static inline crypto_word_t value_barrier_w(crypto_word_t a) {
+inline crypto_word_t value_barrier_w(crypto_word_t a) {
 #if defined(__GNUC__) || defined(__clang__)
   __asm__("" : "+r"(a) : /* no inputs */);
 #endif
@@ -249,7 +262,7 @@ static inline crypto_word_t value_barrier_w(crypto_word_t a) {
 }
 
 // value_barrier_u32 behaves like |value_barrier_w| but takes a |uint32_t|.
-static inline uint32_t value_barrier_u32(uint32_t a) {
+inline uint32_t value_barrier_u32(uint32_t a) {
 #if defined(__GNUC__) || defined(__clang__)
   __asm__("" : "+r"(a) : /* no inputs */);
 #endif
@@ -257,7 +270,7 @@ static inline uint32_t value_barrier_u32(uint32_t a) {
 }
 
 // value_barrier_u64 behaves like |value_barrier_w| but takes a |uint64_t|.
-static inline uint64_t value_barrier_u64(uint64_t a) {
+inline uint64_t value_barrier_u64(uint64_t a) {
 #if defined(__GNUC__) || defined(__clang__)
   __asm__("" : "+r"(a) : /* no inputs */);
 #endif
@@ -269,13 +282,12 @@ static inline uint64_t value_barrier_u64(uint64_t a) {
 
 // constant_time_msb_w returns the given value with the MSB copied to all the
 // other bits.
-static inline crypto_word_t constant_time_msb_w(crypto_word_t a) {
+inline crypto_word_t constant_time_msb_w(crypto_word_t a) {
   return 0u - (a >> (sizeof(a) * 8 - 1));
 }
 
 // constant_time_lt_w returns 0xff..f if a < b and 0 otherwise.
-static inline crypto_word_t constant_time_lt_w(crypto_word_t a,
-                                               crypto_word_t b) {
+inline crypto_word_t constant_time_lt_w(crypto_word_t a, crypto_word_t b) {
   // Consider the two cases of the problem:
   //   msb(a) == msb(b): a < b iff the MSB of a - b is set.
   //   msb(a) != msb(b): a < b iff the MSB of b is set.
@@ -311,24 +323,23 @@ static inline crypto_word_t constant_time_lt_w(crypto_word_t a,
 
 // constant_time_lt_8 acts like |constant_time_lt_w| but returns an 8-bit
 // mask.
-static inline uint8_t constant_time_lt_8(crypto_word_t a, crypto_word_t b) {
+inline uint8_t constant_time_lt_8(crypto_word_t a, crypto_word_t b) {
   return (uint8_t)(constant_time_lt_w(a, b));
 }
 
 // constant_time_ge_w returns 0xff..f if a >= b and 0 otherwise.
-static inline crypto_word_t constant_time_ge_w(crypto_word_t a,
-                                               crypto_word_t b) {
+inline crypto_word_t constant_time_ge_w(crypto_word_t a, crypto_word_t b) {
   return ~constant_time_lt_w(a, b);
 }
 
 // constant_time_ge_8 acts like |constant_time_ge_w| but returns an 8-bit
 // mask.
-static inline uint8_t constant_time_ge_8(crypto_word_t a, crypto_word_t b) {
+inline uint8_t constant_time_ge_8(crypto_word_t a, crypto_word_t b) {
   return (uint8_t)(constant_time_ge_w(a, b));
 }
 
 // constant_time_is_zero returns 0xff..f if a == 0 and 0 otherwise.
-static inline crypto_word_t constant_time_is_zero_w(crypto_word_t a) {
+inline crypto_word_t constant_time_is_zero_w(crypto_word_t a) {
   // Here is an SMT-LIB verification of this formula:
   //
   // (define-fun is_zero ((a (_ BitVec 32))) (_ BitVec 32)
@@ -344,40 +355,38 @@ static inline crypto_word_t constant_time_is_zero_w(crypto_word_t a) {
 
 // constant_time_is_zero_8 acts like |constant_time_is_zero_w| but returns an
 // 8-bit mask.
-static inline uint8_t constant_time_is_zero_8(crypto_word_t a) {
+inline uint8_t constant_time_is_zero_8(crypto_word_t a) {
   return (uint8_t)(constant_time_is_zero_w(a));
 }
 
 // constant_time_eq_w returns 0xff..f if a == b and 0 otherwise.
-static inline crypto_word_t constant_time_eq_w(crypto_word_t a,
-                                               crypto_word_t b) {
+inline crypto_word_t constant_time_eq_w(crypto_word_t a, crypto_word_t b) {
   return constant_time_is_zero_w(a ^ b);
 }
 
 // constant_time_eq_8 acts like |constant_time_eq_w| but returns an 8-bit
 // mask.
-static inline uint8_t constant_time_eq_8(crypto_word_t a, crypto_word_t b) {
+inline uint8_t constant_time_eq_8(crypto_word_t a, crypto_word_t b) {
   return (uint8_t)(constant_time_eq_w(a, b));
 }
 
 // constant_time_eq_int acts like |constant_time_eq_w| but works on int
 // values.
-static inline crypto_word_t constant_time_eq_int(int a, int b) {
+inline crypto_word_t constant_time_eq_int(int a, int b) {
   return constant_time_eq_w((crypto_word_t)(a), (crypto_word_t)(b));
 }
 
 // constant_time_eq_int_8 acts like |constant_time_eq_int| but returns an 8-bit
 // mask.
-static inline uint8_t constant_time_eq_int_8(int a, int b) {
+inline uint8_t constant_time_eq_int_8(int a, int b) {
   return constant_time_eq_8((crypto_word_t)(a), (crypto_word_t)(b));
 }
 
 // constant_time_select_w returns (mask & a) | (~mask & b). When |mask| is all
 // 1s or all 0s (as returned by the methods above), the select methods return
 // either |a| (if |mask| is nonzero) or |b| (if |mask| is zero).
-static inline crypto_word_t constant_time_select_w(crypto_word_t mask,
-                                                   crypto_word_t a,
-                                                   crypto_word_t b) {
+inline crypto_word_t constant_time_select_w(crypto_word_t mask, crypto_word_t a,
+                                            crypto_word_t b) {
   // Clang recognizes this pattern as a select. While it usually transforms it
   // to a cmov, it sometimes further transforms it into a branch, which we do
   // not want.
@@ -389,8 +398,8 @@ static inline crypto_word_t constant_time_select_w(crypto_word_t mask,
 
 // constant_time_select_8 acts like |constant_time_select| but operates on
 // 8-bit values.
-static inline uint8_t constant_time_select_8(crypto_word_t mask, uint8_t a,
-                                             uint8_t b) {
+inline uint8_t constant_time_select_8(crypto_word_t mask, uint8_t a,
+                                      uint8_t b) {
   // |mask| is a word instead of |uint8_t| to avoid materializing 0x000..0MM
   // Making both |mask| and its value barrier |uint8_t| would allow the compiler
   // to materialize 0x????..?MM instead, but only clang is that clever.
@@ -403,15 +412,15 @@ static inline uint8_t constant_time_select_8(crypto_word_t mask, uint8_t a,
 
 // constant_time_select_int acts like |constant_time_select| but operates on
 // ints.
-static inline int constant_time_select_int(crypto_word_t mask, int a, int b) {
+inline int constant_time_select_int(crypto_word_t mask, int a, int b) {
   return static_cast<int>(constant_time_select_w(
       mask, static_cast<crypto_word_t>(a), static_cast<crypto_word_t>(b)));
 }
 
 // constant_time_select_32 acts like |constant_time_select| but operates on
 // 32-bit values.
-static inline uint32_t constant_time_select_32(crypto_word_t mask, uint32_t a,
-                                               uint32_t b) {
+inline uint32_t constant_time_select_32(crypto_word_t mask, uint32_t a,
+                                        uint32_t b) {
   return static_cast<uint32_t>(
       constant_time_select_w(mask, crypto_word_t{a}, crypto_word_t{b}));
 }
@@ -419,9 +428,9 @@ static inline uint32_t constant_time_select_32(crypto_word_t mask, uint32_t a,
 // constant_time_conditional_memcpy copies |n| bytes from |src| to |dst| if
 // |mask| is 0xff..ff and does nothing if |mask| is 0. The |n|-byte memory
 // ranges at |dst| and |src| must not overlap, as when calling |memcpy|.
-static inline void constant_time_conditional_memcpy(void *dst, const void *src,
-                                                    const size_t n,
-                                                    const crypto_word_t mask) {
+inline void constant_time_conditional_memcpy(void *dst, const void *src,
+                                             const size_t n,
+                                             const crypto_word_t mask) {
   assert(!buffers_alias(dst, n, src, n));
   uint8_t *out = (uint8_t *)dst;
   const uint8_t *in = (const uint8_t *)src;
@@ -433,9 +442,9 @@ static inline void constant_time_conditional_memcpy(void *dst, const void *src,
 // constant_time_conditional_memxor xors |n| bytes from |src| to |dst| if
 // |mask| is 0xff..ff and does nothing if |mask| is 0. The |n|-byte memory
 // ranges at |dst| and |src| must not overlap, as when calling |memcpy|.
-static inline void constant_time_conditional_memxor(void *dst, const void *src,
-                                                    size_t n,
-                                                    const crypto_word_t mask) {
+inline void constant_time_conditional_memxor(void *dst, const void *src,
+                                             size_t n,
+                                             const crypto_word_t mask) {
   assert(!buffers_alias(dst, n, src, n));
   uint8_t *out = (uint8_t *)dst;
   const uint8_t *in = (const uint8_t *)src;
@@ -485,7 +494,7 @@ static inline void constant_time_conditional_memxor(void *dst, const void *src,
 
 #endif  // BORINGSSL_CONSTANT_TIME_VALIDATION
 
-static inline crypto_word_t constant_time_declassify_w(crypto_word_t v) {
+inline crypto_word_t constant_time_declassify_w(crypto_word_t v) {
   // Return |v| through a value barrier to be safe. Valgrind-based constant-time
   // validation is partly to check the compiler has not undone any constant-time
   // work. Any place |BORINGSSL_CONSTANT_TIME_VALIDATION| influences
@@ -501,7 +510,7 @@ static inline crypto_word_t constant_time_declassify_w(crypto_word_t v) {
   return value_barrier_w(v);
 }
 
-static inline int constant_time_declassify_int(int v) {
+inline int constant_time_declassify_int(int v) {
   static_assert(sizeof(uint32_t) == sizeof(int),
                 "int is not the same size as uint32_t");
   // See comment above.
@@ -616,67 +625,74 @@ OPENSSL_EXPORT int CRYPTO_refcount_dec_and_test_zero(CRYPTO_refcount_t *count);
 
 // Locks.
 
+// A Mutex is a read/write lock. It can be constant-initialized, but has a
+// destructor. To allocate a global one, use StaticMutex, which skips the
+// destructor.
+class OPENSSL_EXPORT StaticMutex {
+ public:
+  constexpr StaticMutex() = default;
+  StaticMutex(const StaticMutex &) = delete;
+  StaticMutex &operator=(const StaticMutex &) = delete;
+
+  // LockRead locks the mutex such that other threads may also have a read lock,
+  // but none may have a write lock.
+  void LockRead();
+  // UnlockRead releases a read lock.
+  void UnlockRead();
+
+  // LockWrite locks the mutex such that no other thread has any type of lock on
+  // it.
+  void LockWrite();
+  // UnlockWrite releases a write lock.
+  void UnlockWrite();
+
+protected:
 #if !defined(OPENSSL_THREADS)
-typedef struct crypto_mutex_st {
-  char padding;  // Empty structs have different sizes in C and C++.
-} CRYPTO_MUTEX;
-#define CRYPTO_MUTEX_INIT {0}
+  // Nothing.
 #elif defined(OPENSSL_WINDOWS_THREADS)
-typedef SRWLOCK CRYPTO_MUTEX;
-#define CRYPTO_MUTEX_INIT SRWLOCK_INIT
+  SRWLOCK lock_ = SRWLOCK_INIT;
 #elif defined(OPENSSL_PTHREADS)
-typedef pthread_rwlock_t CRYPTO_MUTEX;
-#define CRYPTO_MUTEX_INIT PTHREAD_RWLOCK_INITIALIZER
+  pthread_rwlock_t lock_ = PTHREAD_RWLOCK_INITIALIZER;
 #else
 #error "Unknown threading library"
 #endif
+};
 
-// CRYPTO_MUTEX_init initialises |lock|. If |lock| is a static variable, use a
-// |CRYPTO_MUTEX_INIT|.
-OPENSSL_EXPORT void CRYPTO_MUTEX_init(CRYPTO_MUTEX *lock);
-
-// CRYPTO_MUTEX_lock_read locks |lock| such that other threads may also have a
-// read lock, but none may have a write lock.
-OPENSSL_EXPORT void CRYPTO_MUTEX_lock_read(CRYPTO_MUTEX *lock);
-
-// CRYPTO_MUTEX_lock_write locks |lock| such that no other thread has any type
-// of lock on it.
-OPENSSL_EXPORT void CRYPTO_MUTEX_lock_write(CRYPTO_MUTEX *lock);
-
-// CRYPTO_MUTEX_unlock_read unlocks |lock| for reading.
-OPENSSL_EXPORT void CRYPTO_MUTEX_unlock_read(CRYPTO_MUTEX *lock);
-
-// CRYPTO_MUTEX_unlock_write unlocks |lock| for writing.
-OPENSSL_EXPORT void CRYPTO_MUTEX_unlock_write(CRYPTO_MUTEX *lock);
-
-// CRYPTO_MUTEX_cleanup releases all resources held by |lock|.
-OPENSSL_EXPORT void CRYPTO_MUTEX_cleanup(CRYPTO_MUTEX *lock);
+class OPENSSL_EXPORT Mutex  : public StaticMutex {
+ public:
+  constexpr Mutex() = default;
+  ~Mutex();
+};
 
 namespace internal {
 
-// MutexLockBase is a RAII helper for CRYPTO_MUTEX locking.
-template <void (*LockFunc)(CRYPTO_MUTEX *), void (*ReleaseFunc)(CRYPTO_MUTEX *)>
+// MutexLockBase is a RAII helper for Mutex locking.
+template <void (StaticMutex::*LockMethod)(),
+          void (StaticMutex::*ReleaseMethod)()>
 class MutexLockBase {
  public:
-  explicit MutexLockBase(CRYPTO_MUTEX *mu) : mu_(mu) {
+  explicit MutexLockBase(StaticMutex *mu) : mu_(mu) {
     assert(mu_ != nullptr);
-    LockFunc(mu_);
+    (mu_->*LockMethod)();
   }
-  ~MutexLockBase() { ReleaseFunc(mu_); }
-  MutexLockBase(const MutexLockBase<LockFunc, ReleaseFunc> &) = delete;
-  MutexLockBase &operator=(const MutexLockBase<LockFunc, ReleaseFunc> &) =
-      delete;
+  ~MutexLockBase() { (mu_->*ReleaseMethod)(); }
+  MutexLockBase(const MutexLockBase &) = delete;
+  MutexLockBase &operator=(const MutexLockBase &) = delete;
 
  private:
-  CRYPTO_MUTEX *const mu_;
+  StaticMutex *const mu_;
 };
 
 }  // namespace internal
 
 using MutexWriteLock =
-    internal::MutexLockBase<CRYPTO_MUTEX_lock_write, CRYPTO_MUTEX_unlock_write>;
+    internal::MutexLockBase<&StaticMutex::LockWrite, &StaticMutex::UnlockWrite>;
 using MutexReadLock =
-    internal::MutexLockBase<CRYPTO_MUTEX_lock_read, CRYPTO_MUTEX_unlock_read>;
+    internal::MutexLockBase<&StaticMutex::LockRead, &StaticMutex::UnlockRead>;
+using MutexWriteUnlock =
+    internal::MutexLockBase<&StaticMutex::UnlockWrite, &StaticMutex::LockWrite>;
+using MutexReadUnlock =
+    internal::MutexLockBase<&StaticMutex::UnlockRead, &StaticMutex::LockRead>;
 
 
 // Thread local storage.
@@ -729,33 +745,32 @@ struct crypto_ex_data_st {
 
 BSSL_NAMESPACE_BEGIN
 
-typedef struct crypto_ex_data_func_st CRYPTO_EX_DATA_FUNCS;
+struct ExDataFuncs;
 
-// CRYPTO_EX_DATA_CLASS tracks the ex_indices registered for a type which
+// ExDataClass tracks the ex_indices registered for a type which
 // supports ex_data. It should defined as a static global within the module
 // which defines that type.
-typedef struct {
-  CRYPTO_MUTEX lock;
-  // funcs is a linked list of |CRYPTO_EX_DATA_FUNCS| structures. It may be
-  // traversed without serialization only up to |num_funcs|. last points to the
-  // final entry of |funcs|, or NULL if empty.
-  CRYPTO_EX_DATA_FUNCS *funcs, *last;
+struct ExDataClass {
+  explicit constexpr ExDataClass(bool with_app_data = false)
+      : num_reserved(with_app_data ? 1 : 0) {}
+
+  StaticMutex lock;
+  // funcs is a linked list of |ExDataFuncs| structures. It may be traversed
+  // without serialization only up to |num_funcs|. last points to the final
+  // entry of |funcs|, or nullptr if empty.
+  ExDataFuncs *funcs = nullptr, *last = nullptr;
   // num_funcs is the number of entries in |funcs|.
-  Atomic<uint32_t> num_funcs;
+  Atomic<uint32_t> num_funcs = 0;
   // num_reserved is one if the ex_data index zero is reserved for legacy
   // |TYPE_get_app_data| functions.
-  uint8_t num_reserved;
-} CRYPTO_EX_DATA_CLASS;
-
-#define CRYPTO_EX_DATA_CLASS_INIT {CRYPTO_MUTEX_INIT, nullptr, nullptr, {}, 0}
-#define CRYPTO_EX_DATA_CLASS_INIT_WITH_APP_DATA \
-  {CRYPTO_MUTEX_INIT, nullptr, nullptr, {}, 1}
+  uint8_t num_reserved = 0;
+};
 
 // CRYPTO_get_ex_new_index_ex allocates a new index for |ex_data_class|. Each
 // class of object should provide a wrapper function that uses the correct
-// |CRYPTO_EX_DATA_CLASS|. It returns the new index on success and -1 on error.
+// |ExDataClass|. It returns the new index on success and -1 on error.
 OPENSSL_EXPORT int CRYPTO_get_ex_new_index_ex(
-    CRYPTO_EX_DATA_CLASS *ex_data_class, long argl, void *argp,
+    ExDataClass *ex_data_class, long argl, void *argp,
     CRYPTO_EX_free *free_func);
 
 // CRYPTO_set_ex_data sets an extra data pointer on a given object. Each class
@@ -771,41 +786,35 @@ OPENSSL_EXPORT void *CRYPTO_get_ex_data(const CRYPTO_EX_DATA *ad, int index);
 OPENSSL_EXPORT void CRYPTO_new_ex_data(CRYPTO_EX_DATA *ad);
 
 // CRYPTO_free_ex_data frees |ad|, which is an object of the given class.
-OPENSSL_EXPORT void CRYPTO_free_ex_data(CRYPTO_EX_DATA_CLASS *ex_data_class,
+OPENSSL_EXPORT void CRYPTO_free_ex_data(ExDataClass *ex_data_class,
                                         CRYPTO_EX_DATA *ad);
 
 
 // Endianness conversions.
 
 #if defined(__GNUC__) && __GNUC__ >= 2
-static inline uint16_t CRYPTO_bswap2(uint16_t x) {
-  return __builtin_bswap16(x);
-}
+inline uint16_t CRYPTO_bswap2(uint16_t x) { return __builtin_bswap16(x); }
 
-static inline uint32_t CRYPTO_bswap4(uint32_t x) {
-  return __builtin_bswap32(x);
-}
+inline uint32_t CRYPTO_bswap4(uint32_t x) { return __builtin_bswap32(x); }
 
-static inline uint64_t CRYPTO_bswap8(uint64_t x) {
-  return __builtin_bswap64(x);
-}
+inline uint64_t CRYPTO_bswap8(uint64_t x) { return __builtin_bswap64(x); }
 #elif defined(_MSC_VER)
 #pragma intrinsic(_byteswap_uint64, _byteswap_ulong, _byteswap_ushort)
-static inline uint16_t CRYPTO_bswap2(uint16_t x) { return _byteswap_ushort(x); }
+inline uint16_t CRYPTO_bswap2(uint16_t x) { return _byteswap_ushort(x); }
 
-static inline uint32_t CRYPTO_bswap4(uint32_t x) { return _byteswap_ulong(x); }
+inline uint32_t CRYPTO_bswap4(uint32_t x) { return _byteswap_ulong(x); }
 
-static inline uint64_t CRYPTO_bswap8(uint64_t x) { return _byteswap_uint64(x); }
+inline uint64_t CRYPTO_bswap8(uint64_t x) { return _byteswap_uint64(x); }
 #else
-static inline uint16_t CRYPTO_bswap2(uint16_t x) { return (x >> 8) | (x << 8); }
+inline uint16_t CRYPTO_bswap2(uint16_t x) { return (x >> 8) | (x << 8); }
 
-static inline uint32_t CRYPTO_bswap4(uint32_t x) {
+inline uint32_t CRYPTO_bswap4(uint32_t x) {
   x = (x >> 16) | (x << 16);
   x = ((x & 0xff00ff00) >> 8) | ((x & 0x00ff00ff) << 8);
   return x;
 }
 
-static inline uint64_t CRYPTO_bswap8(uint64_t x) {
+inline uint64_t CRYPTO_bswap8(uint64_t x) {
   return CRYPTO_bswap4(x >> 32) | (((uint64_t)CRYPTO_bswap4(x)) << 32);
 }
 #endif
@@ -825,7 +834,7 @@ static inline uint64_t CRYPTO_bswap8(uint64_t x) {
 // Note |OPENSSL_memcmp| is a different function from |CRYPTO_memcmp|.
 
 // C++ defines |memchr| as a const-correct overload.
-static inline const void *OPENSSL_memchr(const void *s, int c, size_t n) {
+inline const void *OPENSSL_memchr(const void *s, int c, size_t n) {
   if (n == 0) {
     return nullptr;
   }
@@ -833,7 +842,7 @@ static inline const void *OPENSSL_memchr(const void *s, int c, size_t n) {
   return memchr(s, c, n);
 }
 
-static inline void *OPENSSL_memchr(void *s, int c, size_t n) {
+inline void *OPENSSL_memchr(void *s, int c, size_t n) {
   if (n == 0) {
     return nullptr;
   }
@@ -841,7 +850,7 @@ static inline void *OPENSSL_memchr(void *s, int c, size_t n) {
   return memchr(s, c, n);
 }
 
-static inline int OPENSSL_memcmp(const void *s1, const void *s2, size_t n) {
+inline int OPENSSL_memcmp(const void *s1, const void *s2, size_t n) {
   if (n == 0) {
     return 0;
   }
@@ -849,7 +858,7 @@ static inline int OPENSSL_memcmp(const void *s1, const void *s2, size_t n) {
   return memcmp(s1, s2, n);
 }
 
-static inline void *OPENSSL_memcpy(void *dst, const void *src, size_t n) {
+inline void *OPENSSL_memcpy(void *dst, const void *src, size_t n) {
   if (n == 0) {
     return dst;
   }
@@ -857,7 +866,7 @@ static inline void *OPENSSL_memcpy(void *dst, const void *src, size_t n) {
   return memcpy(dst, src, n);
 }
 
-static inline void *OPENSSL_memmove(void *dst, const void *src, size_t n) {
+inline void *OPENSSL_memmove(void *dst, const void *src, size_t n) {
   if (n == 0) {
     return dst;
   }
@@ -865,7 +874,7 @@ static inline void *OPENSSL_memmove(void *dst, const void *src, size_t n) {
   return memmove(dst, src, n);
 }
 
-static inline void *OPENSSL_memset(void *dst, int c, size_t n) {
+inline void *OPENSSL_memset(void *dst, int c, size_t n) {
   if (n == 0) {
     return dst;
   }
@@ -880,80 +889,80 @@ static inline void *OPENSSL_memset(void *dst, int c, size_t n) {
 // endianness. They use |memcpy|, and so avoid alignment or strict aliasing
 // requirements on the input and output pointers.
 
-static inline uint16_t CRYPTO_load_u16_le(const void *in) {
+inline uint16_t CRYPTO_load_u16_le(const void *in) {
   uint16_t v;
   OPENSSL_memcpy(&v, in, sizeof(v));
   return v;
 }
 
-static inline void CRYPTO_store_u16_le(void *out, uint16_t v) {
+inline void CRYPTO_store_u16_le(void *out, uint16_t v) {
   OPENSSL_memcpy(out, &v, sizeof(v));
 }
 
-static inline uint16_t CRYPTO_load_u16_be(const void *in) {
+inline uint16_t CRYPTO_load_u16_be(const void *in) {
   uint16_t v;
   OPENSSL_memcpy(&v, in, sizeof(v));
   return CRYPTO_bswap2(v);
 }
 
-static inline void CRYPTO_store_u16_be(void *out, uint16_t v) {
+inline void CRYPTO_store_u16_be(void *out, uint16_t v) {
   v = CRYPTO_bswap2(v);
   OPENSSL_memcpy(out, &v, sizeof(v));
 }
 
-static inline uint32_t CRYPTO_load_u32_le(const void *in) {
+inline uint32_t CRYPTO_load_u32_le(const void *in) {
   uint32_t v;
   OPENSSL_memcpy(&v, in, sizeof(v));
   return v;
 }
 
-static inline void CRYPTO_store_u32_le(void *out, uint32_t v) {
+inline void CRYPTO_store_u32_le(void *out, uint32_t v) {
   OPENSSL_memcpy(out, &v, sizeof(v));
 }
 
-static inline uint32_t CRYPTO_load_u32_be(const void *in) {
+inline uint32_t CRYPTO_load_u32_be(const void *in) {
   uint32_t v;
   OPENSSL_memcpy(&v, in, sizeof(v));
   return CRYPTO_bswap4(v);
 }
 
-static inline void CRYPTO_store_u32_be(void *out, uint32_t v) {
+inline void CRYPTO_store_u32_be(void *out, uint32_t v) {
   v = CRYPTO_bswap4(v);
   OPENSSL_memcpy(out, &v, sizeof(v));
 }
 
-static inline uint64_t CRYPTO_load_u64_le(const void *in) {
+inline uint64_t CRYPTO_load_u64_le(const void *in) {
   uint64_t v;
   OPENSSL_memcpy(&v, in, sizeof(v));
   return v;
 }
 
-static inline void CRYPTO_store_u64_le(void *out, uint64_t v) {
+inline void CRYPTO_store_u64_le(void *out, uint64_t v) {
   OPENSSL_memcpy(out, &v, sizeof(v));
 }
 
-static inline uint64_t CRYPTO_load_u64_be(const void *ptr) {
+inline uint64_t CRYPTO_load_u64_be(const void *ptr) {
   uint64_t ret;
   OPENSSL_memcpy(&ret, ptr, sizeof(ret));
   return CRYPTO_bswap8(ret);
 }
 
-static inline void CRYPTO_store_u64_be(void *out, uint64_t v) {
+inline void CRYPTO_store_u64_be(void *out, uint64_t v) {
   v = CRYPTO_bswap8(v);
   OPENSSL_memcpy(out, &v, sizeof(v));
 }
 
-static inline crypto_word_t CRYPTO_load_word_le(const void *in) {
+inline crypto_word_t CRYPTO_load_word_le(const void *in) {
   crypto_word_t v;
   OPENSSL_memcpy(&v, in, sizeof(v));
   return v;
 }
 
-static inline void CRYPTO_store_word_le(void *out, crypto_word_t v) {
+inline void CRYPTO_store_word_le(void *out, crypto_word_t v) {
   OPENSSL_memcpy(out, &v, sizeof(v));
 }
 
-static inline crypto_word_t CRYPTO_load_word_be(const void *in) {
+inline crypto_word_t CRYPTO_load_word_be(const void *in) {
   crypto_word_t v;
   OPENSSL_memcpy(&v, in, sizeof(v));
 #if defined(OPENSSL_64_BIT)
@@ -972,7 +981,7 @@ static inline crypto_word_t CRYPTO_load_word_be(const void *in) {
 // width is undefined. Both Clang and GCC recognize this pattern as a rotation,
 // but MSVC does not. Instead, we call MSVC's built-in functions.
 
-static inline uint32_t CRYPTO_rotl_u32(uint32_t value, int shift) {
+inline uint32_t CRYPTO_rotl_u32(uint32_t value, int shift) {
 #if defined(_MSC_VER)
   return _rotl(value, shift);
 #else
@@ -980,7 +989,7 @@ static inline uint32_t CRYPTO_rotl_u32(uint32_t value, int shift) {
 #endif
 }
 
-static inline uint32_t CRYPTO_rotr_u32(uint32_t value, int shift) {
+inline uint32_t CRYPTO_rotr_u32(uint32_t value, int shift) {
 #if defined(_MSC_VER)
   return _rotr(value, shift);
 #else
@@ -988,7 +997,7 @@ static inline uint32_t CRYPTO_rotr_u32(uint32_t value, int shift) {
 #endif
 }
 
-static inline uint64_t CRYPTO_rotl_u64(uint64_t value, int shift) {
+inline uint64_t CRYPTO_rotl_u64(uint64_t value, int shift) {
 #if defined(_MSC_VER)
   return _rotl64(value, shift);
 #else
@@ -996,7 +1005,7 @@ static inline uint64_t CRYPTO_rotl_u64(uint64_t value, int shift) {
 #endif
 }
 
-static inline uint64_t CRYPTO_rotr_u64(uint64_t value, int shift) {
+inline uint64_t CRYPTO_rotr_u64(uint64_t value, int shift) {
 #if defined(_MSC_VER)
   return _rotr64(value, shift);
 #else
@@ -1019,10 +1028,15 @@ void BORINGSSL_FIPS_abort() __attribute__((noreturn));
 // Call |BORINGSSL_self_test| to run every self test.
 int boringssl_self_test_startup();
 
-// boringssl_ensure_rsa_self_test checks whether the RSA self-test has been run
-// in this address space. If not, it runs it and crashes the address space if
-// unsuccessful.
-void boringssl_ensure_rsa_self_test();
+// boringssl_ensure_rsa_sign_self_test checks whether the RSA signing self-test
+// has been run in this address space. If not, it runs it and crashes the
+// address space if unsuccessful.
+void boringssl_ensure_rsa_sign_self_test();
+
+// boringssl_ensure_rsa_verify_self_test checks whether the RSA verification
+// self-test has been run in this address space. If not, it runs it and crashes
+// the address space if unsuccessful.
+void boringssl_ensure_rsa_verify_self_test();
 
 // boringssl_ensure_ecc_self_test checks whether the ECDSA and ECDH self-test
 // has been run in this address space. If not, it runs it and crashes the
@@ -1038,17 +1052,18 @@ void boringssl_ensure_ffdh_self_test();
 
 // Outside of FIPS mode, the lazy tests are no-ops.
 
-inline void boringssl_ensure_rsa_self_test() {}
+inline void boringssl_ensure_rsa_sign_self_test() {}
+inline void boringssl_ensure_rsa_verify_self_test() {}
 inline void boringssl_ensure_ecc_self_test() {}
 inline void boringssl_ensure_ffdh_self_test() {}
 
 #endif  // FIPS
 
-// BORINGSSL_check_test memcmp's two values of equal length. It returns 1 on
-// success and, on failure, it prints an error message that includes the
-// hexdumps the two values and returns 0.
-int BORINGSSL_check_test(const void *expected, const void *actual,
-                         size_t expected_len, const char *name);
+// BORINGSSL_check_test checks that |expected| and |actual| are equal. It
+// returns 1 on success and, on failure, it prints an error message that
+// includes the hexdumps the two values and returns 0.
+int BORINGSSL_check_test(Span<const uint8_t> expected,
+                         Span<const uint8_t> actual, const char *name);
 
 // boringssl_self_test_sha256 performs a SHA-256 KAT.
 int boringssl_self_test_sha256();
@@ -1315,6 +1330,9 @@ inline int CRYPTO_is_VPCLMULQDQ_capable() {
 // ARMV8_SHA512 indicates support for hardware SHA-512 instructions.
 #define ARMV8_SHA512 (1 << 6)
 
+// ARMV8_SHA3 indicates support for eor3 instructions.
+#define ARMV8_SHA3 (1 << 7)
+
 #if defined(OPENSSL_STATIC_ARMCAP)
 // We assume |CRYPTO_is_*_capable| already checked static capabilities.
 inline uint32_t OPENSSL_get_armcap() { return 0; }
@@ -1399,6 +1417,15 @@ inline int CRYPTO_is_ARMv8_SHA512_capable() {
 #endif
 }
 
+inline int CRYPTO_is_ARMv8_SHA3_capable() {
+  // There is no |OPENSSL_STATIC_ARMCAP_SHA3|.
+#if defined(__ARM_FEATURE_SHA3)
+  return 1;
+#else
+  return (OPENSSL_get_armcap() & ARMV8_SHA3) != 0;
+#endif
+}
+
 #endif  // OPENSSL_ARM || OPENSSL_AARCH64
 
 
@@ -1480,8 +1507,8 @@ inline uint64_t CRYPTO_addc_u64(uint64_t x, uint64_t y, uint64_t carry,
 
 #else
 
-static inline uint32_t CRYPTO_addc_u32(uint32_t x, uint32_t y, uint32_t carry,
-                                       uint32_t *out_carry) {
+inline uint32_t CRYPTO_addc_u32(uint32_t x, uint32_t y, uint32_t carry,
+                                uint32_t *out_carry) {
   declassify_assert(carry <= 1);
 #if defined(_M_IX86)
   uint32_t sum = 0;
@@ -1495,8 +1522,8 @@ static inline uint32_t CRYPTO_addc_u32(uint32_t x, uint32_t y, uint32_t carry,
 #endif
 }
 
-static inline uint64_t CRYPTO_addc_u64(uint64_t x, uint64_t y, uint64_t carry,
-                                       uint64_t *out_carry) {
+inline uint64_t CRYPTO_addc_u64(uint64_t x, uint64_t y, uint64_t carry,
+                                uint64_t *out_carry) {
   declassify_assert(carry <= 1);
 #if defined(_M_X64)
   uint64_t sum = 0;
@@ -1554,8 +1581,8 @@ inline uint64_t CRYPTO_subc_u64(uint64_t x, uint64_t y, uint64_t borrow,
 
 #else
 
-static inline uint32_t CRYPTO_subc_u32(uint32_t x, uint32_t y, uint32_t borrow,
-                                       uint32_t *out_borrow) {
+inline uint32_t CRYPTO_subc_u32(uint32_t x, uint32_t y, uint32_t borrow,
+                                uint32_t *out_borrow) {
   declassify_assert(borrow <= 1);
 #if defined(_M_IX86)
   uint32_t diff = 0;
@@ -1568,8 +1595,8 @@ static inline uint32_t CRYPTO_subc_u32(uint32_t x, uint32_t y, uint32_t borrow,
 #endif
 }
 
-static inline uint64_t CRYPTO_subc_u64(uint64_t x, uint64_t y, uint64_t borrow,
-                                       uint64_t *out_borrow) {
+inline uint64_t CRYPTO_subc_u64(uint64_t x, uint64_t y, uint64_t borrow,
+                                uint64_t *out_borrow) {
   declassify_assert(borrow <= 1);
 #if defined(_M_X64)
   uint64_t diff = 0;
@@ -1612,6 +1639,62 @@ class Cleanup {
 };
 template <typename F>
 Cleanup(F func) -> Cleanup<F>;
+
+// DECLARE_OPAQUE_STRUCT defines a public struct |public_name| with an
+// implementation struct |impl_name|.
+//
+// To prevent accidents, the |public_name| struct will be neither constructable,
+// nor copyable/movable, nor deletable.
+//
+// It must be used from inside the |bssl| namespace; however, |public_name| will
+// be defined outside.
+//
+// Usage:
+//
+// DECLARE_OPAQUE_STRUCT(public_st, PublicImpl)
+//
+// BSSL_NAMESPACE_BEGIN
+//
+// class PublicImpl : public public_st {
+//  public:
+//   PublicImpl();
+//   ~PublicImpl();
+//   void foo();
+// };
+//
+// BSSL_NAMESPACE_END
+//
+// The implementation struct can be converted to the public struct implicitly;
+// to convert the public struct to the implementation struct, call
+// |FromOpaque| on it. It is explicitly allowed to call |FromOpaque| on a
+// |nullptr|.
+#define DECLARE_OPAQUE_STRUCT(public_name, impl_name)                  \
+  BSSL_NAMESPACE_BEGIN                                                 \
+  class impl_name;                                                     \
+  BSSL_NAMESPACE_END                                                   \
+                                                                       \
+  /* This is unnamespaced but assumed to not create linker symbols. */ \
+  struct public_name {                                                 \
+    using ImplType = bssl::impl_name;                                  \
+                                                                       \
+   private:                                                            \
+    public_name() = default;                                           \
+    ~public_name() = default;                                          \
+    public_name(const public_name &) = delete;                         \
+    public_name &operator=(const public_name &) = delete;              \
+                                                                       \
+    friend class bssl::impl_name;                                      \
+  };
+
+template <typename Public>
+inline typename Public::ImplType *FromOpaque(Public *p) {
+  return static_cast<typename Public::ImplType *>(p);
+}
+
+template <typename Public>
+inline const typename Public::ImplType *FromOpaque(const Public *p) {
+  return static_cast<const typename Public::ImplType *>(p);
+}
 
 BSSL_NAMESPACE_END
 
