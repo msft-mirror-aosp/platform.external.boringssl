@@ -355,7 +355,6 @@ cc_library_static {
     visibility: [
         "//art/dex2oat",
         "//art/tools/hiddenapi",
-        "//bootable/recovery/updater",
         "//bootable/deprecated-ota/updater",
         "//external/conscrypt",
         "//external/rust/android-crates-io/crates/quiche",
@@ -363,9 +362,6 @@ cc_library_static {
         // access to libcrypto_static, but we can't express that.
         "//external/toybox",
         "//hardware/interfaces/confirmationui/1.0/vts/functional",
-        "//hardware/interfaces/drm/1.0/vts/functional",
-        "//hardware/interfaces/drm/1.2/vts/functional",
-        "//hardware/interfaces/drm/1.3/vts/functional",
         "//hardware/interfaces/keymaster/3.0/vts/functional",
         "//hardware/interfaces/keymaster/4.0/vts/functional",
         "//hardware/interfaces/keymaster/4.1/vts/functional",
@@ -378,9 +374,7 @@ cc_library_static {
         "//system/fs/fs_mgr/liblp",
         "//system/fs/fs_mgr/liblp/vts_core",
         "//system/fs/fs_mgr/libsnapshot",
-        "//system/libvintf/test",
         "//system/security/keystore/tests",
-        "//system/security/provisioner",
         "//test/vts-testcase/security/avb",
         "//vendor:__subpackages__",
     ],
@@ -1007,7 +1001,6 @@ dirgroup {
     dirs: ["."],
     visibility: ["//trusty/vendor/google/aosp/scripts"],
 }
-
 
 genrule {
     name: "libbssl_macros_src_nostd",
