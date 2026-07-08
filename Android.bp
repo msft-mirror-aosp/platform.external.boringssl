@@ -180,6 +180,7 @@ cc_object {
         "//apex_available:platform",
         "com.android.adbd",
         "com.android.adservices",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.bt",
         "com.android.compos",
         "com.android.configinfrastructure",
@@ -288,6 +289,7 @@ cc_library {
         "//apex_available:platform",
         "com.android.adbd",
         "com.android.adservices",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.bt",
         "com.android.compos",
         "com.android.configinfrastructure",
@@ -384,6 +386,7 @@ cc_library_static {
         "com.android.adservices",
         "com.android.art",
         "com.android.art.debug",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.extservices",
         "com.android.neuralnetworks",
     ],
@@ -477,6 +480,7 @@ cc_library {
     apex_available: [
         "//apex_available:platform",
         "com.android.adbd",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.bt",
         "com.android.compos",
         "com.android.configinfrastructure",
@@ -770,6 +774,7 @@ rust_bindgen {
     min_sdk_version: "29",
     apex_available: [
         "//apex_available:platform",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.compos",
         "com.android.configinfrastructure",
         "com.android.virt",
@@ -790,6 +795,7 @@ cc_library_static {
     min_sdk_version: "29",
     apex_available: [
         "//apex_available:platform",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.compos",
         "com.android.configinfrastructure",
         "com.android.virt",
@@ -898,6 +904,7 @@ rust_library_rlib {
     min_sdk_version: "29",
     apex_available: [
         "//apex_available:platform",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.compos",
         "com.android.configinfrastructure",
         "com.android.virt",
@@ -970,9 +977,11 @@ rust_library {
     host_supported: true,
     apex_available: [
         "//apex_available:platform",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.compos",
         "com.android.virt",
     ],
+    min_sdk_version: "apex_inherit",
     vendor_available: true,
     product_available: true,
 }
@@ -1024,6 +1033,7 @@ rust_library_rlib {
     min_sdk_version: "29",
     apex_available: [
         "//apex_available:platform",
+        "com.android.bettertogether", // Bug component ID: 1916535, PoC: kaishi
         "com.android.compos",
         "com.android.configinfrastructure",
         "com.android.virt",
