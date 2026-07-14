@@ -166,7 +166,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/rand/forkunsafe.cc
   ${BORINGSSL_ROOT}src/crypto/rand/getentropy.cc
   ${BORINGSSL_ROOT}src/crypto/rand/ios.cc
-  ${BORINGSSL_ROOT}src/crypto/rand/passive.cc
   ${BORINGSSL_ROOT}src/crypto/rand/rand.cc
   ${BORINGSSL_ROOT}src/crypto/rand/trusty.cc
   ${BORINGSSL_ROOT}src/crypto/rand/urandom.cc
@@ -535,7 +534,6 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/bn_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cmac_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/ec_test.cc
-  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-nistz_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/entropy/jitter_test.cc
@@ -574,6 +572,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/test/gtest_main.cc
   ${BORINGSSL_ROOT}src/crypto/thread_test.cc
   ${BORINGSSL_ROOT}src/crypto/trust_token/trust_token_test.cc
+  ${BORINGSSL_ROOT}src/crypto/x509/x509_extension_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_test.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_time_test.cc
   ${BORINGSSL_ROOT}src/crypto/xwing/xwing_test.cc
@@ -644,7 +643,7 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cavp_aes192_cmac_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cavp_aes256_cmac_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/ec_scalar_base_mult_tests.txt
-  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-nistz_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_sign_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_verify_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/keccak/keccak_tests.txt

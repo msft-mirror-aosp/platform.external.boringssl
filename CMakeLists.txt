@@ -415,7 +415,6 @@ add_library(
   src/crypto/rand/forkunsafe.cc
   src/crypto/rand/getentropy.cc
   src/crypto/rand/ios.cc
-  src/crypto/rand/passive.cc
   src/crypto/rand/rand.cc
   src/crypto/rand/trusty.cc
   src/crypto/rand/urandom.cc
