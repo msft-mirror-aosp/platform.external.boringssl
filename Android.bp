@@ -53,6 +53,7 @@ cc_defaults {
         "-DOPENSSL_SMALL",
         "-Werror",
         "-Wno-unused-parameter",
+        "-DBORINGSSL_TEMPORARY_NO_CXX_RUNTIME",
     ],
 
     cppflags: [
