@@ -192,6 +192,7 @@ cc_object {
         "com.android.tethering",
         "com.android.virt",
         "com.android.wifi",
+        "com.google.android.widevine.*", // Bug component ID: 59148, PoC: robertshih@
     ],
 }
 
@@ -306,6 +307,7 @@ cc_library {
         "com.android.tethering",
         "com.android.virt",
         "com.android.wifi",
+        "com.google.android.widevine.*", // Bug component ID: 59148, PoC: robertshih@
     ],
     min_sdk_version: "29",
     afdo: true,
