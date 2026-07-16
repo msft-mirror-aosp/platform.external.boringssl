@@ -19,7 +19,7 @@
 #define _LIBCPP_ABI_BOUNDED_ITERATORS_IN_VECTOR
 #define _LIBCPP_ABI_BOUNDED_UNIQUE_PTR
 
-// Randomize std::sort for equal keys.
+// Randomize order where unspecified (e.g. equal-comparing items in std::sort).
 #define _LIBCPP_DEBUG_RANDOMIZE_UNSPECIFIED_STABILITY
 
 // libc++ headers disable std::string ASan annotations if this is not defined.
