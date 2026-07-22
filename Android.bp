@@ -384,6 +384,7 @@ cc_library_static {
         "//packages/modules/DnsResolver/tests:__subpackages__",
         "//packages/modules/NeuralNetworks:__subpackages__",
         "//system/core/init",
+        "//system/extras/partition_tools",
         "//system/fs/fs_mgr/liblp",
         "//system/fs/fs_mgr/liblp/vts_core",
         "//system/fs/fs_mgr/libsnapshot",
