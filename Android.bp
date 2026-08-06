@@ -3,6 +3,7 @@
 // probably something that should be changed.
 
 package {
+    default_team: "trendy_team_java_core_libraries",
     default_visibility: ["//visibility:private"],
     default_applicable_licenses: ["external_boringssl_license"],
 }
