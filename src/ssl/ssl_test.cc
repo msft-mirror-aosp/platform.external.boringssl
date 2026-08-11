@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -43,6 +44,7 @@
 #include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/sha.h>
+#include <openssl/span.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 
@@ -684,8 +686,8 @@ TEST(SSLTest, CurveRules) {
 }
 
 TEST(SSLTest, DefaultCurves) {
-  const uint16_t kDefaults[] = {SSL_GROUP_X25519, SSL_GROUP_SECP256R1,
-                                SSL_GROUP_SECP384R1};
+  const uint16_t kDefaults[] = {SSL_GROUP_X25519_MLKEM768, SSL_GROUP_X25519,
+                                SSL_GROUP_SECP256R1, SSL_GROUP_SECP384R1};
 
   // Test the group ID APIs.
   {
@@ -704,12 +706,13 @@ TEST(SSLTest, DefaultCurves) {
 
     bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
     ASSERT_TRUE(ssl);
-    EXPECT_THAT(ssl->config->supported_group_list,
+    EXPECT_THAT(FromOpaque(ssl.get())->config->supported_group_list,
                 Not(ElementsAreArray(kDefaults)));
 
     // Setting an empty list restores the defaults.
     ASSERT_TRUE(SSL_set1_group_ids(ssl.get(), nullptr, 0));
-    EXPECT_THAT(ssl->config->supported_group_list, ElementsAreArray(kDefaults));
+    EXPECT_THAT(FromOpaque(ssl.get())->config->supported_group_list,
+                ElementsAreArray(kDefaults));
     ASSERT_TRUE(SSL_CTX_set1_group_ids(ctx.get(), nullptr, 0));
     EXPECT_THAT(FromOpaque(ctx.get())->supported_group_list,
                 ElementsAreArray(kDefaults));
@@ -732,12 +735,13 @@ TEST(SSLTest, DefaultCurves) {
 
     bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
     ASSERT_TRUE(ssl);
-    EXPECT_THAT(ssl->config->supported_group_list,
+    EXPECT_THAT(FromOpaque(ssl.get())->config->supported_group_list,
                 Not(ElementsAreArray(kDefaults)));
 
     // Setting an empty list restores the defaults.
     ASSERT_TRUE(SSL_set1_groups(ssl.get(), nullptr, 0));
-    EXPECT_THAT(ssl->config->supported_group_list, ElementsAreArray(kDefaults));
+    EXPECT_THAT(FromOpaque(ssl.get())->config->supported_group_list,
+                ElementsAreArray(kDefaults));
     ASSERT_TRUE(SSL_CTX_set1_groups(ctx.get(), nullptr, 0));
     EXPECT_THAT(FromOpaque(ctx.get())->supported_group_list,
                 ElementsAreArray(kDefaults));
@@ -832,7 +836,8 @@ TEST(SSLTest, SetClientKeyShares) {
     ASSERT_TRUE(ctx);
     bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
     ASSERT_TRUE(ssl);
-    ASSERT_FALSE(ssl->config->client_key_share_selections.has_value());
+    ASSERT_FALSE(
+        FromOpaque(ssl.get())->config->client_key_share_selections.has_value());
 
     ASSERT_TRUE(SSL_set1_group_ids(ssl.get(), t.supported_groups.data(),
                                    t.supported_groups.size()));
@@ -840,9 +845,11 @@ TEST(SSLTest, SetClientKeyShares) {
                                          t.key_shares.size()),
               t.expected_success);
     if (t.expected_success) {
-      ASSERT_TRUE(ssl->config->client_key_share_selections.has_value());
-      EXPECT_THAT(ssl->config->client_key_share_selections.value(),
-                  ElementsAreArray(t.key_shares));
+      ASSERT_TRUE(FromOpaque(ssl.get())
+                      ->config->client_key_share_selections.has_value());
+      EXPECT_THAT(
+          FromOpaque(ssl.get())->config->client_key_share_selections.value(),
+          ElementsAreArray(t.key_shares));
     }
   }
 }
@@ -855,7 +862,8 @@ TEST(SSLTest, ClientKeySharesResetAfterChangingGroups) {
   ASSERT_TRUE(ctx);
   bssl::UniquePtr<SSL> ssl(SSL_new(ctx.get()));
   ASSERT_TRUE(ssl);
-  ASSERT_FALSE(ssl->config->client_key_share_selections.has_value());
+  ASSERT_FALSE(
+      FromOpaque(ssl.get())->config->client_key_share_selections.has_value());
 
   // An initial groups list and key shares that are compatible.
   const uint16_t kGroups1[] = {SSL_GROUP_X25519_MLKEM768, SSL_GROUP_X25519};
@@ -863,22 +871,27 @@ TEST(SSLTest, ClientKeySharesResetAfterChangingGroups) {
   ASSERT_TRUE(SSL_set1_group_ids(ssl.get(), kGroups1, std::size(kGroups1)));
   ASSERT_TRUE(
       SSL_set1_client_key_shares(ssl.get(), kKeyShares, std::size(kKeyShares)));
-  ASSERT_TRUE(ssl->config->client_key_share_selections.has_value());
-  EXPECT_EQ(ssl->config->client_key_share_selections->size(), 2u);
+  ASSERT_TRUE(
+      FromOpaque(ssl.get())->config->client_key_share_selections.has_value());
+  EXPECT_EQ(FromOpaque(ssl.get())->config->client_key_share_selections->size(),
+            2u);
 
   // A new groups list that is still compatible with the previously set key
   // shares.
   const uint16_t kGroups2[] = {SSL_GROUP_MLKEM1024, SSL_GROUP_X25519_MLKEM768,
                                SSL_GROUP_X25519};
   ASSERT_TRUE(SSL_set1_group_ids(ssl.get(), kGroups2, std::size(kGroups2)));
-  ASSERT_TRUE(ssl->config->client_key_share_selections.has_value());
-  EXPECT_EQ(ssl->config->client_key_share_selections->size(), 2u);
+  ASSERT_TRUE(
+      FromOpaque(ssl.get())->config->client_key_share_selections.has_value());
+  EXPECT_EQ(FromOpaque(ssl.get())->config->client_key_share_selections->size(),
+            2u);
 
   // A new groups list that is no longer compatible with the previously set key
   // shares.
   const uint16_t kGroups3[] = {SSL_GROUP_MLKEM1024, SSL_GROUP_X25519};
   ASSERT_TRUE(SSL_set1_group_ids(ssl.get(), kGroups3, std::size(kGroups3)));
-  EXPECT_FALSE(ssl->config->client_key_share_selections.has_value());
+  EXPECT_FALSE(
+      FromOpaque(ssl.get())->config->client_key_share_selections.has_value());
 }
 
 TEST(SSLTest, ServerSupportedGroupsHint) {
@@ -957,7 +970,7 @@ TEST(SSLTest, ServerSupportedGroupsHint) {
     ASSERT_TRUE(SSL_connect(ssl.get()));
 
     std::vector<uint16_t> key_shares;
-    for (const auto &key_share : ssl->s3->hs->key_shares) {
+    for (const auto &key_share : FromOpaque(ssl.get())->s3->hs->key_shares) {
       key_shares.push_back(key_share->GroupID());
     }
     EXPECT_THAT(key_shares, ElementsAreArray(t.expected_key_shares));
@@ -976,19 +989,22 @@ TEST(SSLTest, ServerHintOverridesClientKeyShareSelections) {
   const uint16_t kKeyShares[] = {SSL_GROUP_SECP256R1};
   ASSERT_TRUE(
       SSL_set1_client_key_shares(ssl.get(), kKeyShares, std::size(kKeyShares)));
-  ASSERT_TRUE(ssl->config->client_key_share_selections.has_value());
-  EXPECT_THAT(ssl->config->client_key_share_selections.value(),
-              ElementsAreArray(kKeyShares));
+  ASSERT_TRUE(
+      FromOpaque(ssl.get())->config->client_key_share_selections.has_value());
+  EXPECT_THAT(
+      FromOpaque(ssl.get())->config->client_key_share_selections.value(),
+      ElementsAreArray(kKeyShares));
   const uint16_t kServerHint[] = {SSL_GROUP_X25519};
   ASSERT_TRUE(SSL_set1_server_supported_groups_hint(ssl.get(), kServerHint,
                                                     std::size(kServerHint)));
-  EXPECT_THAT(ssl->config->server_supported_groups_hint,
+  EXPECT_THAT(FromOpaque(ssl.get())->config->server_supported_groups_hint,
               ElementsAreArray(kServerHint));
 
   // The group predicted based on the server hint should win.
   ASSERT_TRUE(SSL_connect(ssl.get()));
-  ASSERT_EQ(ssl->s3->hs->key_shares.size(), 1u);
-  EXPECT_EQ(kServerHint[0], ssl->s3->hs->key_shares[0]->GroupID());
+  ASSERT_EQ(FromOpaque(ssl.get())->s3->hs->key_shares.size(), 1u);
+  EXPECT_EQ(kServerHint[0],
+            FromOpaque(ssl.get())->s3->hs->key_shares[0]->GroupID());
 }
 
 TEST(SSLTest, ServerHintOverridesEmptyClientKeyShareSelections) {
@@ -1001,17 +1017,19 @@ TEST(SSLTest, ServerHintOverridesEmptyClientKeyShareSelections) {
   ASSERT_TRUE(SSL_set1_group_ids(ssl.get(), kGroups, std::size(kGroups)));
 
   ASSERT_TRUE(SSL_set1_client_key_shares(ssl.get(), nullptr, 0));
-  EXPECT_TRUE(ssl->config->client_key_share_selections->empty());
+  EXPECT_TRUE(
+      FromOpaque(ssl.get())->config->client_key_share_selections->empty());
   const uint16_t kServerHint[] = {SSL_GROUP_X25519};
   ASSERT_TRUE(SSL_set1_server_supported_groups_hint(ssl.get(), kServerHint,
                                                     std::size(kServerHint)));
-  EXPECT_THAT(ssl->config->server_supported_groups_hint,
+  EXPECT_THAT(FromOpaque(ssl.get())->config->server_supported_groups_hint,
               ElementsAreArray(kServerHint));
 
   // The group predicted based on the server hint should win.
   ASSERT_TRUE(SSL_connect(ssl.get()));
-  ASSERT_EQ(ssl->s3->hs->key_shares.size(), 1u);
-  EXPECT_EQ(kServerHint[0], ssl->s3->hs->key_shares[0]->GroupID());
+  ASSERT_EQ(FromOpaque(ssl.get())->s3->hs->key_shares.size(), 1u);
+  EXPECT_EQ(kServerHint[0],
+            FromOpaque(ssl.get())->s3->hs->key_shares[0]->GroupID());
 }
 
 // kOpenSSLSession is a serialized SSL_SESSION.
@@ -1650,6 +1668,13 @@ static bool GetClientHello(SSL *ssl, std::vector<uint8_t> *out) {
 static size_t GetClientHelloLen(uint16_t max_version, uint16_t session_version,
                                 size_t ticket_len) {
   bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
+
+  // Reduce the number of supported groups, as we need ClientHellos smaller
+  // than 254 bytes for SSLTest.Padding.
+  uint16_t groups[] = {SSL_GROUP_X25519, SSL_GROUP_SECP256R1,
+                       SSL_GROUP_SECP384R1};
+  SSL_CTX_set1_group_ids(ctx.get(), groups, sizeof(groups) / sizeof(*groups));
+
   bssl::UniquePtr<SSL_SESSION> session =
       CreateSessionWithTicket(session_version, ticket_len);
   if (!ctx || !session) {
@@ -2324,7 +2349,8 @@ TEST(SSLTest, SetGroupIdsWithEqualPreference) {
 // Test that the SSL group flags are defaulted to zero when zero groups are set
 // (i.e. using the default groups).
 TEST(SSLTest, SetGroupIdsWithFlags_DefaultGroups) {
-  const uint16_t kDefaultGroups[] = {SSL_GROUP_X25519, SSL_GROUP_SECP256R1,
+  const uint16_t kDefaultGroups[] = {SSL_GROUP_X25519_MLKEM768,
+                                     SSL_GROUP_X25519, SSL_GROUP_SECP256R1,
                                      SSL_GROUP_SECP384R1};
   const uint32_t kBogusFlags[] = {SSL_GROUP_FLAG_EQUAL_PREFERENCE_WITH_NEXT,
                                   SSL_GROUP_FLAG_EQUAL_PREFERENCE_WITH_NEXT, 0};
@@ -2341,7 +2367,7 @@ TEST(SSLTest, SetGroupIdsWithFlags_DefaultGroups) {
   // Should set the default groups, and corresponding default (zero) flags.
   EXPECT_TRUE(
       SSL_set1_group_ids_with_flags(server.get(), nullptr, kBogusFlags, 0));
-  EXPECT_THAT(server->config->supported_group_list,
+  EXPECT_THAT(FromOpaque(server.get())->config->supported_group_list,
               ElementsAreArray(kDefaultGroups));
 
   // Set up and run the handshake to show that the bogus "equal preference with
@@ -4851,7 +4877,7 @@ TEST_P(SSLVersionTest, Version) {
   EXPECT_EQ(SSL_version(server_.get()), placeholder);
 }
 
-// Tests that that `SSL_get_pending_cipher` is available during the ALPN
+// Tests that `SSL_get_pending_cipher` is available during the ALPN
 // selection callback.
 TEST_P(SSLVersionTest, ALPNCipherAvailable) {
   ASSERT_TRUE(UseCertAndKey(client_ctx_.get()));
@@ -5685,7 +5711,7 @@ TEST(SSLTest, OverrideChainAndKey) {
   bssl::UniquePtr<SSL_CTX> ctx(SSL_CTX_new(TLS_method()));
   ASSERT_TRUE(ctx);
 
-  // Configure one cert and key pair, then replace it with noather.
+  // Configure one cert and key pair, then replace it with another.
   std::vector<CRYPTO_BUFFER *> certs = {leaf1.get(), ca1.get()};
   ASSERT_TRUE(SSL_CTX_set_chain_and_key(ctx.get(), certs.data(), certs.size(),
                                         key1.get(), nullptr));
@@ -5891,97 +5917,70 @@ TEST(SSLTest, RawPublicKeyCredential) {
 }
 
 TEST(SSLTest, CredentialCertProperties) {
-  // A CertificatePropertyList containing a trust_anchors property, and an
-  // unknown property 0xbb with 0 bytes of data.
   bssl::UniquePtr<SSL_CREDENTIAL> cred(SSL_CREDENTIAL_new_x509());
   ASSERT_TRUE(cred);
-  ASSERT_FALSE(SSL_CREDENTIAL_is_complete(cred.get()));
-  static const uint8_t kTestProperties1[] = {0x00, 0x0b, 0x00, 0x00, 0x00,
-                                             0x03, 0xba, 0xdb, 0x0b, 0x00,
-                                             0xbb, 0x00, 0x00};
-  bssl::UniquePtr<CRYPTO_BUFFER> pl(
-      CRYPTO_BUFFER_new(kTestProperties1, sizeof(kTestProperties1), nullptr));
-  ASSERT_TRUE(pl);
-  EXPECT_TRUE(SSL_CREDENTIAL_set1_certificate_properties(cred.get(), pl.get()));
 
-  // A CertificatePropertyList containing a trust_anchors property, and an
-  // unknown property 0xbb with 1 byte of data.
-  static const uint8_t kTestProperties2[] = {0x00, 0x0c, 0x00, 0x00, 0x00,
-                                             0x03, 0xba, 0xdb, 0x0b, 0x00,
-                                             0xbb, 0x00, 0x01, 0xba};
-  pl.reset(
-      CRYPTO_BUFFER_new(kTestProperties2, sizeof(kTestProperties2), nullptr));
-  ASSERT_TRUE(pl);
-  EXPECT_TRUE(SSL_CREDENTIAL_set1_certificate_properties(cred.get(), pl.get()));
-
-  // A CertificatePropertyList containing a trust_anchors property, and an
-  // unknown but malformed property 0xbb with missing data.
-  static const uint8_t kTestProperties3[] = {0x00, 0x09, 0x00, 0x00, 0x00, 0x03,
-                                             0xba, 0xdb, 0x0b, 0x00, 0xbb};
-  pl.reset(
-      CRYPTO_BUFFER_new(kTestProperties3, sizeof(kTestProperties3), nullptr));
-  ASSERT_TRUE(pl);
-  EXPECT_FALSE(
-      SSL_CREDENTIAL_set1_certificate_properties(cred.get(), pl.get()));
-  EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_SSL,
-                          SSL_R_INVALID_CERTIFICATE_PROPERTY_LIST));
-
-  // A CertificatePropertyList containing a trust_anchors property, and an
-  // unknown but malformed property 0xbb with incorrect length data.
-  static const uint8_t kTestProperties4[] = {0x00, 0x0c, 0x00, 0x00, 0x00,
-                                             0x03, 0xba, 0xdb, 0x0b, 0x00,
-                                             0xbb, 0x00, 0x03, 0xba};
-  pl.reset(
-      CRYPTO_BUFFER_new(kTestProperties4, sizeof(kTestProperties4), nullptr));
-  ASSERT_TRUE(pl);
-  EXPECT_FALSE(
-      SSL_CREDENTIAL_set1_certificate_properties(cred.get(), pl.get()));
-  EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_SSL,
-                          SSL_R_INVALID_CERTIFICATE_PROPERTY_LIST));
-
-  // A CertificatePropertyList containing a trust_anchors property with 0 bytes
-  // of data.
-  static const uint8_t kTestProperties5[] = {0x00, 0x04, 0x00,
-                                             0x00, 0x00, 0x00};
-  pl.reset(
-      CRYPTO_BUFFER_new(kTestProperties5, sizeof(kTestProperties5), nullptr));
-  ASSERT_TRUE(pl);
-  EXPECT_FALSE(
-      SSL_CREDENTIAL_set1_certificate_properties(cred.get(), pl.get()));
-  EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_SSL,
-                          SSL_R_INVALID_TRUST_ANCHOR_LIST));
-
-  // A CertificatePropertyList containing a trust_anchors property with extra
-  // data.
-  static const uint8_t kTestProperties6[] = {0x00, 0x08, 0x00, 0x00, 0x00,
-                                             0x03, 0xba, 0xdb, 0x0b, 0xbb};
-  pl.reset(
-      CRYPTO_BUFFER_new(kTestProperties6, sizeof(kTestProperties6), nullptr));
-  ASSERT_TRUE(pl);
-  EXPECT_FALSE(
-      SSL_CREDENTIAL_set1_certificate_properties(cred.get(), pl.get()));
-  EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_SSL,
-                          SSL_R_INVALID_CERTIFICATE_PROPERTY_LIST));
-
-  // A CertificatePropertyList containing a trust_anchors property with missing
-  // data.
-  static const uint8_t kTestProperties7[] = {0x00, 0x06, 0x00, 0x00,
-                                             0x00, 0x03, 0xba, 0xdb};
-  pl.reset(
-      CRYPTO_BUFFER_new(kTestProperties7, sizeof(kTestProperties7), nullptr));
-  ASSERT_TRUE(pl);
-  EXPECT_FALSE(
-      SSL_CREDENTIAL_set1_certificate_properties(cred.get(), pl.get()));
-  EXPECT_TRUE(ErrorEquals(ERR_get_error(), ERR_LIB_SSL,
-                          SSL_R_INVALID_CERTIFICATE_PROPERTY_LIST));
-
-  // A CertificatePropertyList containing only a trust_anchors property.
-  static const uint8_t kTestProperties8[] = {0x00, 0x07, 0x00, 0x00, 0x00,
-                                             0x03, 0xba, 0xdb, 0x0b};
-  pl.reset(
-      CRYPTO_BUFFER_new(kTestProperties8, sizeof(kTestProperties8), nullptr));
-  ASSERT_TRUE(pl);
-  EXPECT_TRUE(SSL_CREDENTIAL_set1_certificate_properties(cred.get(), pl.get()));
+  static const struct {
+    std::vector<uint8_t> props;
+    bool ok;
+  } kTests[] = {
+      // trust_anchors and an unknown property 0xbb with 0 bytes of data.
+      {{0x00, 0x0b, 0x00, 0x00, 0x00, 0x03, 0xba, 0xdb, 0x0b, 0x00, 0xbb, 0x00,
+        0x00},
+       true},
+      // trust_anchors and an unknown property 0xbb with 1 byte of data.
+      {{0x00, 0x0c, 0x00, 0x00, 0x00, 0x03, 0xba, 0xdb, 0x0b, 0x00, 0xbb, 0x00,
+        0x01, 0xba},
+       true},
+      // trust_anchors and an unknown but malformed property 0xbb with missing
+      // data.
+      {{0x00, 0x09, 0x00, 0x00, 0x00, 0x03, 0xba, 0xdb, 0x0b, 0x00, 0xbb},
+       false},
+      // trust_anchors and an unknown but malformed property 0xbb with incorrect
+      // length data.
+      {{0x00, 0x0c, 0x00, 0x00, 0x00, 0x03, 0xba, 0xdb, 0x0b, 0x00, 0xbb, 0x00,
+        0x03, 0xba},
+       false},
+      // trust_anchors with 0 bytes of data.
+      {{0x00, 0x04, 0x00, 0x00, 0x00, 0x00}, false},
+      // trust_anchors with extra data.
+      {{0x00, 0x08, 0x00, 0x00, 0x00, 0x03, 0xba, 0xdb, 0x0b, 0xbb}, false},
+      // trust_anchors with missing data.
+      {{0x00, 0x06, 0x00, 0x00, 0x00, 0x03, 0xba, 0xdb}, false},
+      // Only trust_anchors.
+      {{0x00, 0x07, 0x00, 0x00, 0x00, 0x03, 0xba, 0xdb, 0x0b}, true},
+      // Duplicate trust_anchors.
+      {{0x00, 0x0e, 0x00, 0x00, 0x00, 0x03, 0x11, 0x11, 0x11, 0x00, 0x00, 0x00,
+        0x03, 0x22, 0x22, 0x22},
+       false},
+      // Only unknown properties.
+      {{0x00, 0x08, 0xaa, 0xaa, 0x00, 0x00, 0xbb, 0xbb, 0x00, 0x00}, true},
+      // Duplicate unknown properties.
+      {{0x00, 0x08, 0xaa, 0xaa, 0x00, 0x00, 0xaa, 0xaa, 0x00, 0x00}, false},
+      // Out of order unknown properties.
+      {{0x00, 0x08, 0xbb, 0xbb, 0x00, 0x00, 0xaa, 0xaa, 0x00, 0x00}, false},
+      // Empty trust_anchor_group_inclusions (should have been omitted).
+      {{0x00, 0x06, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00}, false},
+      // Trailing data after trust_anchor_group_inclusions.
+      {{0x00, 0x1b, 0x00, 0x01, 0x00, 0x17, 0x00, 0x14, 0x03, 0x11,
+        0x11, 0x11, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00},
+       false},
+  };
+  for (const auto &t : kTests) {
+    SCOPED_TRACE(Bytes(t.props));
+    bssl::UniquePtr<CRYPTO_BUFFER> props(
+        CRYPTO_BUFFER_new(t.props.data(), t.props.size(), nullptr));
+    ASSERT_TRUE(props);
+    if (t.ok) {
+      EXPECT_TRUE(
+          SSL_CREDENTIAL_set1_certificate_properties(cred.get(), props.get()));
+    } else {
+      EXPECT_FALSE(
+          SSL_CREDENTIAL_set1_certificate_properties(cred.get(), props.get()));
+      ERR_clear_error();
+    }
+  }
 }
 
 TEST(SSLTest, SetChainAndKeyCtx) {
@@ -7192,12 +7191,13 @@ TEST(SSLTest, ApplyHandoffRemovesUnsupportedCurves) {
   };
 
   // The default list of groups is used before applying the handoff.
-  EXPECT_THAT(server->config->supported_group_list,
-              ElementsAreArray({SSL_GROUP_X25519, SSL_GROUP_SECP256R1,
-                                SSL_GROUP_SECP384R1}));
+  EXPECT_THAT(FromOpaque(server.get())->config->supported_group_list,
+              ElementsAreArray({SSL_GROUP_X25519_MLKEM768, SSL_GROUP_X25519,
+                                SSL_GROUP_SECP256R1, SSL_GROUP_SECP384R1}));
   ASSERT_TRUE(SSL_apply_handoff(server.get(), handoff));
-  EXPECT_EQ(1u, server->config->supported_group_list.size());
-  EXPECT_EQ(SSL_GROUP_SECP256R1, server->config->supported_group_list[0]);
+  EXPECT_EQ(1u, FromOpaque(server.get())->config->supported_group_list.size());
+  EXPECT_EQ(SSL_GROUP_SECP256R1,
+            FromOpaque(server.get())->config->supported_group_list[0]);
 }
 
 TEST(SSLTest, ZeroSizedWiteFlushesHandshakeMessages) {
@@ -9473,6 +9473,8 @@ TEST(SSLTest, ProcessTLS13NewSessionTicket) {
   // Servers cannot call `SSL_process_tls13_new_session_ticket`.
   ASSERT_FALSE(SSL_process_tls13_new_session_ticket(server.get(), kTicket,
                                                     sizeof(kTicket)));
+  EXPECT_TRUE(
+      ErrorsAreAndClear({{ERR_LIB_SSL, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED}}));
 
   // Clients cannot call `SSL_process_tls13_new_session_ticket` before the
   // handshake completes.
@@ -9481,6 +9483,8 @@ TEST(SSLTest, ProcessTLS13NewSessionTicket) {
   SSL_set_connect_state(client2.get());
   ASSERT_FALSE(SSL_process_tls13_new_session_ticket(client2.get(), kTicket,
                                                     sizeof(kTicket)));
+  EXPECT_TRUE(
+      ErrorsAreAndClear({{ERR_LIB_SSL, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED}}));
 }
 
 TEST(SSLTest, BIO) {
@@ -9585,6 +9589,90 @@ TEST(SSLTest, ALPNConfig) {
   // Empty lists are valid and are interpreted as disabling ALPN.
   EXPECT_EQ(0, SSL_CTX_set_alpn_protos(ctx.get(), nullptr, 0));
   check_alpn_proto({});
+}
+
+TEST(SSLTest, DeclarativeServerALPN) {
+  bssl::UniquePtr<SSL_CTX> client_ctx(SSL_CTX_new(TLS_method()));
+  bssl::UniquePtr<SSL_CTX> server_ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(client_ctx);
+  ASSERT_TRUE(server_ctx);
+  bssl::UniquePtr<X509> cert = GetTestCertificate();
+  bssl::UniquePtr<EVP_PKEY> key = GetTestKey();
+  ASSERT_TRUE(cert);
+  ASSERT_TRUE(key);
+  ASSERT_TRUE(SSL_CTX_use_certificate(server_ctx.get(), cert.get()));
+  ASSERT_TRUE(SSL_CTX_use_PrivateKey(server_ctx.get(), key.get()));
+  SSL_CTX_set_custom_verify(client_ctx.get(), SSL_VERIFY_PEER,
+                            AcceptAnyCertificate);
+
+  // Helper to run connection and check negotiated ALPN.
+  auto check_negotiation =
+      [&](bssl::Span<const uint8_t> client_protos,
+          bssl::Span<const uint8_t> server_protos,
+          std::optional<bssl::Span<const uint8_t>> expected_alpn) {
+        ASSERT_EQ(
+            0, SSL_CTX_set_alpn_protos(client_ctx.get(), client_protos.data(),
+                                       client_protos.size()));
+        ASSERT_EQ(
+            0, SSL_CTX_set_alpn_protos(server_ctx.get(), server_protos.data(),
+                                       server_protos.size()));
+
+        bssl::UniquePtr<SSL> client, server;
+        bool success = ConnectClientAndServer(
+            &client, &server, client_ctx.get(), server_ctx.get());
+        if (!expected_alpn.has_value()) {
+          EXPECT_FALSE(success);
+          return;
+        }
+
+        ASSERT_TRUE(success);
+        const uint8_t *alpn = nullptr;
+        unsigned alpn_len = 0;
+        SSL_get0_alpn_selected(client.get(), &alpn, &alpn_len);
+        EXPECT_EQ(Bytes(*expected_alpn), Bytes(alpn, alpn_len));
+        SSL_get0_alpn_selected(server.get(), &alpn, &alpn_len);
+        EXPECT_EQ(Bytes(*expected_alpn), Bytes(alpn, alpn_len));
+      };
+  const auto kBar = bssl::StringAsBytes("bar");
+  const auto kH2 = bssl::StringAsBytes("h2");
+
+  // 1. Basic match: Client ["foo", "bar"], Server ["bar", "baz"] ->
+  // negotiates "bar"
+  const uint8_t kClient1[] = {3, 'f', 'o', 'o', 3, 'b', 'a', 'r'};
+  const uint8_t kServer1[] = {3, 'b', 'a', 'r', 3, 'b', 'a', 'z'};
+  check_negotiation(kClient1, kServer1, kBar);
+
+  // 2. Client preference: Client ["bar", "foo"], Server ["foo", "bar"] ->
+  // negotiates "bar"
+  const uint8_t kClient2[] = {3, 'b', 'a', 'r', 3, 'f', 'o', 'o'};
+  const uint8_t kServer2[] = {3, 'f', 'o', 'o', 3, 'b', 'a', 'r'};
+  check_negotiation(kClient2, kServer2, kBar);
+
+  // 3. No overlap -> Handshake fails
+  const uint8_t kClient3[] = {3, 'f', 'o', 'o'};
+  const uint8_t kServer3[] = {3, 'b', 'a', 'r'};
+  check_negotiation(kClient3, kServer3, std::nullopt);
+
+  // 4. HTTP/2 example.
+  SSL_CTX_set_min_proto_version(client_ctx.get(), TLS1_2_VERSION);
+  SSL_CTX_set_max_proto_version(client_ctx.get(), TLS1_2_VERSION);
+  SSL_CTX_set_min_proto_version(server_ctx.get(), TLS1_2_VERSION);
+  SSL_CTX_set_max_proto_version(server_ctx.get(), TLS1_2_VERSION);
+
+  const uint8_t kClientH2[] = {2,   'h', '2', 8,   'h', 't',
+                               't', 'p', '/', '1', '.', '1'};
+  const uint8_t kServerH2[] = {2, 'h', '2'};
+
+  ASSERT_TRUE(
+      SSL_CTX_set_cipher_list(client_ctx.get(), "ECDHE-RSA-AES128-SHA256"));
+  ASSERT_TRUE(
+      SSL_CTX_set_cipher_list(server_ctx.get(), "ECDHE-RSA-AES128-SHA256"));
+
+  // Yes, this is a violation of RFC 7540, Section 9.2.
+  // However, we made a conscious decision to negotiate "h2" anyway.
+  // Users should install their own ALPN callback to enforce the cipher suite
+  // restrictions.
+  check_negotiation(kClientH2, kServerH2, kH2);
 }
 
 TEST(SSLTest, AcceptedPeerCertTypesConfig) {
@@ -11791,10 +11879,10 @@ TEST(SSLTest, SignatureAlgorithmUsed) {
   // algorithm used.
   const uint16_t kPref = SSL_SIGN_RSA_PSS_RSAE_SHA384;
   static const uint16_t kPrefs[] = {kPref};
-  ASSERT_TRUE(SSL_CTX_set_signing_algorithm_prefs(
-      server_ctx.get(), kPrefs, std::size(kPrefs)));
-  ASSERT_TRUE(SSL_CTX_set_signing_algorithm_prefs(
-      client_ctx.get(), kPrefs, std::size(kPrefs)));
+  ASSERT_TRUE(SSL_CTX_set_signing_algorithm_prefs(server_ctx.get(), kPrefs,
+                                                  std::size(kPrefs)));
+  ASSERT_TRUE(SSL_CTX_set_signing_algorithm_prefs(client_ctx.get(), kPrefs,
+                                                  std::size(kPrefs)));
 
   SSL_CTX_set_info_callback(client_ctx.get(),
                             SignatureAlgorithmUsedInfoCallback);
@@ -11815,6 +11903,169 @@ TEST(SSLTest, SignatureAlgorithmUsed) {
   EXPECT_EQ(SSL_get_signature_algorithm_used(server.get()), 0u);
 }
 
+struct HintTestState {
+  std::vector<uint8_t> client_hello;
+  std::vector<uint8_t> capabilities;
+  std::optional<std::vector<uint8_t>> hints;
+};
+
+// This callback either saves the ClientHello to the HintTestState, or resumes
+// the handshake with hints read from the HintTestState. If `hints` is
+// populated, the contents will be passed to `SSL_set_handshake_hints` and the
+// handshake will be continued. Otherwise, `client_hello` and `capabilities`
+// will be filled in and the handshake will be paused.
+static enum ssl_select_cert_result_t SaveClientHelloCallback(
+    const SSL_CLIENT_HELLO *client_hello) {
+  SSL *ssl = client_hello->ssl;
+  HintTestState *state =
+      reinterpret_cast<HintTestState *>(SSL_get_app_data(ssl));
+  if (state == nullptr) {
+    return ssl_select_cert_success;
+  }
+  if (state->hints.has_value()) {
+    SSL_set_handshake_hints(ssl, state->hints->data(), state->hints->size());
+    return ssl_select_cert_success;
+  }
+
+  state->client_hello.assign(
+      client_hello->client_hello,
+      client_hello->client_hello + client_hello->client_hello_len);
+
+  bssl::ScopedCBB cbb;
+  if (!CBB_init(cbb.get(), 64) || !SSL_serialize_capabilities(ssl, cbb.get())) {
+    return ssl_select_cert_error;
+  }
+  Span<const uint8_t> capabilities = CBBAsSpan(cbb.get());
+  state->capabilities.assign(capabilities.begin(), capabilities.end());
+  return ssl_select_cert_retry;
+}
+
+// Helper to optionally apply `hints_in`, run the server side of a handshake to
+// the first round-trip, and obtain hints. Returns std::nullopt on failure.
+std::optional<std::vector<uint8_t>> GetHandshakeHints(
+    SSL *ssl, const HintTestState &test_state, Span<const uint8_t> hints_in) {
+  SSL_set_accept_state(ssl);
+  if (!SSL_request_handshake_hints(
+          ssl, test_state.client_hello.data(), test_state.client_hello.size(),
+          test_state.capabilities.data(), test_state.capabilities.size()) ||
+      (!hints_in.empty() &&
+       !SSL_set_handshake_hints(ssl, hints_in.data(), hints_in.size()))) {
+    return std::nullopt;
+  }
+  int ret = SSL_do_handshake(ssl);
+  if (ret != -1 || SSL_get_error(ssl, ret) != SSL_ERROR_HANDSHAKE_HINTS_READY) {
+    return std::nullopt;
+  }
+  bssl::ScopedCBB hints;
+  if (!CBB_init(hints.get(), 256) ||
+      !SSL_serialize_handshake_hints(ssl, hints.get())) {
+    return std::nullopt;
+  }
+  return std::vector<uint8_t>(CBB_data(hints.get()),
+                              CBB_data(hints.get()) + CBB_len(hints.get()));
+}
+
+TEST(SSLTest, HandshakeHints) {
+  bssl::UniquePtr<SSL_CTX> client_ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(client_ctx);
+
+  bssl::UniquePtr<SSL_CTX> server_rsa_ctx(
+      CreateContextWithTestCertificate(TLS_method()));
+  ASSERT_TRUE(server_rsa_ctx);
+
+  bssl::UniquePtr<SSL_CTX> server_ecdsa_ctx(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(server_ecdsa_ctx);
+  bssl::UniquePtr<X509> ecdsa_cert = GetECDSATestCertificate();
+  bssl::UniquePtr<EVP_PKEY> ecdsa_key = GetECDSATestKey();
+  ASSERT_TRUE(ecdsa_cert);
+  ASSERT_TRUE(ecdsa_key);
+  ASSERT_TRUE(
+      SSL_CTX_use_certificate(server_ecdsa_ctx.get(), ecdsa_cert.get()));
+  ASSERT_TRUE(SSL_CTX_use_PrivateKey(server_ecdsa_ctx.get(), ecdsa_key.get()));
+
+  SSL_CTX_set_custom_verify(client_ctx.get(), SSL_VERIFY_PEER,
+                            AcceptAnyCertificate);
+  SSL_CTX_set_custom_verify(server_rsa_ctx.get(), SSL_VERIFY_PEER,
+                            AcceptAnyCertificate);
+  SSL_CTX_set_custom_verify(server_ecdsa_ctx.get(), SSL_VERIFY_PEER,
+                            AcceptAnyCertificate);
+
+  // Capture ClientHello and capabilities, pausing the handshake to resume later
+  // with hints.
+  HintTestState test_state;
+  SSL_CTX_set_select_certificate_cb(server_rsa_ctx.get(),
+                                    SaveClientHelloCallback);
+  bssl::UniquePtr<SSL> client, server;
+  ASSERT_TRUE(CreateClientAndServer(&client, &server, client_ctx.get(),
+                                    server_rsa_ctx.get()));
+  SSL_set_app_data(server.get(), &test_state);
+  ASSERT_FALSE(CompleteHandshakes(client.get(), server.get()));
+  ASSERT_FALSE(test_state.client_hello.empty());
+  ASSERT_FALSE(test_state.capabilities.empty());
+
+  // Generate RSA hints from scratch.
+  bssl::UniquePtr<SSL> rsa1(SSL_new(server_rsa_ctx.get()));
+  ASSERT_TRUE(rsa1);
+  std::optional<std::vector<uint8_t>> rsa_hints1 =
+      GetHandshakeHints(rsa1.get(), test_state,
+                        /*hints_in=*/Span<const uint8_t>());
+  ASSERT_TRUE(rsa_hints1.has_value());
+
+  // Generate RSA hints after applying rsa_hints1.
+  bssl::UniquePtr<SSL> rsa2(SSL_new(server_rsa_ctx.get()));
+  ASSERT_TRUE(rsa2);
+  std::optional<std::vector<uint8_t>> rsa_hints2 =
+      GetHandshakeHints(rsa2.get(), test_state,
+                        /*hints_in=*/*rsa_hints1);
+  ASSERT_TRUE(rsa_hints2.has_value());
+
+  EXPECT_EQ(*rsa_hints1, *rsa_hints2);
+
+  // Generate ECDSA hints after providing rsa_hints1.
+  bssl::UniquePtr<SSL> ecdsa1(SSL_new(server_ecdsa_ctx.get()));
+  ASSERT_TRUE(ecdsa1);
+  std::optional<std::vector<uint8_t>> ecdsa_hints1 =
+      GetHandshakeHints(ecdsa1.get(), test_state,
+                        /*hints_in=*/*rsa_hints1);
+  ASSERT_TRUE(ecdsa_hints1.has_value());
+
+  // The ECDSA hints are different because the ECDSA handshake could not apply
+  // the RSA hints.
+  EXPECT_NE(*ecdsa_hints1, *rsa_hints1);
+
+  // Generate ECDSA hints after applying ecdsa_hints1.
+  bssl::UniquePtr<SSL> ecdsa2(SSL_new(server_ecdsa_ctx.get()));
+  ASSERT_TRUE(ecdsa2);
+  std::optional<std::vector<uint8_t>> ecdsa_hints2 =
+      GetHandshakeHints(ecdsa2.get(), test_state,
+                        /*hints_in=*/*ecdsa_hints1);
+  ASSERT_TRUE(ecdsa_hints2.has_value());
+
+  EXPECT_EQ(*ecdsa_hints1, *ecdsa_hints2);
+
+  // Complete the original handshake while providing ecdsa_hints1. (The hints
+  // will not apply, but the handshake should still succeed.)
+  test_state.hints = *std::move(ecdsa_hints1);
+  ASSERT_TRUE(CompleteHandshakes(client.get(), server.get()));
+}
+
+TEST(SSLTest, SessionCrossContextCache) {
+  UniquePtr<SSL_CTX> ctx_a(SSL_CTX_new(TLS_method()));
+  UniquePtr<SSL_CTX> ctx_b(SSL_CTX_new(TLS_method()));
+  ASSERT_TRUE(ctx_a);
+  ASSERT_TRUE(ctx_b);
+
+  UniquePtr<SSL_SESSION> session(SSL_SESSION_new(ctx_b.get()));
+  ASSERT_TRUE(session);
+  uint8_t sid[32] = {};
+  ASSERT_TRUE(SSL_SESSION_set1_id(session.get(), sid, sizeof(sid)));
+
+  EXPECT_TRUE(SSL_CTX_add_session(ctx_a.get(), session.get()));
+
+  // This should fail because the session is already in ctx_a.
+  // TODO(crbug.com/527997772): Remove this restriction.
+  EXPECT_FALSE(SSL_CTX_add_session(ctx_b.get(), session.get()));
+}
+
 }  // namespace
 BSSL_NAMESPACE_END
-

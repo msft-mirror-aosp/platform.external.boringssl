@@ -52,7 +52,10 @@ use crate::{
     call_slice_getter,
     check_lib_error,
     config::ConfigurationError,
-    connection::methods::{verify_cert_task_from_ssl, waker_data_from_ssl},
+    connection::methods::{
+        verify_cert_task_from_ssl,
+        waker_data_from_ssl, //
+    },
     context::CertificateCache,
     crypto_buffer_wrapper,
     errors::{
@@ -62,12 +65,16 @@ use crate::{
     ffi::{
         Alloc,
         Bio,
+        CryptoBufferWrapper,
+        Stack,
+        StackIterator,
         sanitize_slice,
         slice_into_ffi_raw_parts, //
     },
     has_duplicates, //
 };
 
+pub mod early_callback;
 pub(crate) mod methods;
 
 /// TLS credentials builder
@@ -115,6 +122,20 @@ impl<M> TlsCredentialBuilder<M> {
         };
         assert_eq!(rc, 1);
         self
+    }
+
+    fn get_credential_methods(&mut self) -> &mut methods::RustCredentialMethods {
+        let methods = unsafe {
+            // Safety: the validity of the handle `self.0` is witnessed by `self`.
+            bssl_sys::SSL_CREDENTIAL_get_ex_data(self.ptr(), *methods::TLS_CREDENTIAL_METHOD)
+        };
+        if methods.is_null() {
+            panic!("context method goes missing")
+        }
+        unsafe {
+            // Safety: `methods` must be constructed by `new_inner`
+            &mut *(methods as *mut methods::RustCredentialMethods)
+        }
     }
 }
 
@@ -180,6 +201,30 @@ where
             bssl_sys::SSL_CREDENTIAL_set1_signing_algorithm_prefs(self.ptr(), ptr, len)
         });
         Ok(self)
+    }
+
+    /// Set private key delegate.
+    ///
+    /// This will override the `TlsConnection` private key delegate.
+    pub fn with_private_key_delegate<T: 'static + PrivateKeyDelegate>(
+        &mut self,
+        key_method: Option<T>,
+    ) -> &mut Self {
+        let cred = self.ptr();
+        if let Some(key_method) = key_method {
+            unsafe {
+                // Safety: we only install our own vtable.
+                bssl_sys::SSL_CREDENTIAL_set_private_key_method(cred, methods::PRIVATE_KEY_METHODS);
+            }
+            self.get_credential_methods().private_key_methods = Some(Box::new(key_method) as _);
+        } else {
+            unsafe {
+                // Safety: we only uninstall the vtable.
+                bssl_sys::SSL_CREDENTIAL_set_private_key_method(cred, core::ptr::null());
+            }
+            self.get_credential_methods().private_key_methods.take();
+        }
+        self
     }
 
     /// Set a private key.
@@ -475,12 +520,9 @@ impl Certificate {
                 bssl_sys::CRYPTO_BUFFER_len(self.ptr()),
             )
         };
-        if data.is_null() || len == 0 || len >= isize::MAX as usize {
-            return &[];
-        }
         unsafe {
             // Safety: `data` will be outlived by `self`
-            core::slice::from_raw_parts(data, len)
+            sanitize_slice(data, len).expect("buffer is too large")
         }
     }
 }
@@ -517,6 +559,142 @@ crypto_buffer_wrapper! {
     ///
     /// [RFC 9345]: <https://tools.ietf.org/html/rfc9345>
     pub struct DelegatedCredential
+}
+
+/// Private key operation result.
+pub enum PrivateKeyOperationResult {
+    /// Private key operation is still in-flight.
+    Pending,
+    /// Private key operation has successfully completed, with a result of a certain size.
+    Success(usize),
+    /// Private key operation has failed.
+    Error,
+}
+
+/// Signature operation parameters.
+#[non_exhaustive]
+pub struct SignatureOperation<'a> {
+    /// Output location of the signature.
+    pub output: &'a mut [u8],
+    /// Input message to be signed.
+    pub message: &'a [u8],
+    /// Signature algorithm to use.
+    pub algorithm: SignatureAlgorithm,
+}
+
+/// Decryption operation parameters.
+#[non_exhaustive]
+pub struct DecryptionOperation<'a> {
+    /// Output location of the plaintext.
+    pub output: &'a mut [u8],
+    /// Input ciphertext.
+    pub ciphertext: &'a [u8],
+}
+
+/// Private key operation delegate.
+///
+/// This protocol allows for asynchronous signing and decryption operations.
+/// BoringSSL will call one of [`Self::sign`] or [`Self::decrypt`] for operation initiation,
+/// and call [`Self::complete`] to poll for completion as long as
+/// [`PrivateKeyOperationResult::Pending`] is returned.
+pub trait PrivateKeyDelegate: Send + Sync {
+    /// Sign operation.
+    ///
+    /// The underlying task will be immediately polled once as optimisation,
+    /// in case the operation becomes ready instantly.
+    fn sign(&self, sign_op: SignatureOperation<'_>) -> Box<dyn PrivateKeyOperation>;
+    /// Decryption operation.
+    ///
+    /// The underlying task will be immediately polled once as optimisation,
+    /// in case the operation becomes ready instantly.
+    fn decrypt(&self, decrypt_op: DecryptionOperation<'_>) -> Box<dyn PrivateKeyOperation>;
+}
+
+// NOTE: only `Send` bound is necessary; BoringSSL will not drive an operation from
+// multiple threads.
+/// An outstanding private key operation.
+pub trait PrivateKeyOperation: Send {
+    /// Try to complete the operation.
+    ///
+    /// To complete the operation, the implementation should write the results into `output` and
+    /// signal success by returning [`PrivateKeyOperationResult::Success`] with the number of bytes
+    /// written to the `output`.
+    fn complete(
+        &mut self,
+        context: Option<&mut Context<'_>>,
+        output: &mut [u8],
+    ) -> PrivateKeyOperationResult;
+}
+
+// NOTE: we require `Send + Sync + Unpin` mostly due to practicality of working with
+// async futures.
+/// Asynchronous privatge key operation delegate.
+///
+/// This is the `async` analogue of [`PrivateKeyDelegate`].
+pub trait AsyncPrivateKeyDelegate: Send + Sync + Unpin {
+    /// The future to drive the signing operation.
+    type SignOp: 'static + Unpin + Send + Sync + Future<Output = Option<Vec<u8>>>;
+    /// The future to drive the decryption operation.
+    type DecryptOp: 'static + Unpin + Send + Sync + Future<Output = Option<Vec<u8>>>;
+    /// Sign operation.
+    ///
+    /// The underlying future will be immediately polled once as optimisation,
+    /// in case the operation becomes ready immediately.
+    fn sign(&self, message: &[u8], algorithm: SignatureAlgorithm) -> Self::SignOp;
+    /// Decryption operations.
+    ///
+    /// The underlying future will be immediately polled once as optimisation,
+    /// in case the operation becomes ready immediately.
+    fn decrypt(&self, ciphertext: &[u8]) -> Self::DecryptOp;
+}
+
+/// A convenient asynchronous private key decrypter adapter.
+pub struct AsyncPrivateKeyDelegateAdapter<Inner>(pub Inner);
+
+impl<Inner> PrivateKeyDelegate for AsyncPrivateKeyDelegateAdapter<Inner>
+where
+    Inner: AsyncPrivateKeyDelegate,
+{
+    fn sign(&self, sign_op: SignatureOperation<'_>) -> Box<dyn PrivateKeyOperation> {
+        Box::new(AsyncPrivateKeyOperationAdapter(
+            self.0.sign(sign_op.message, sign_op.algorithm),
+        ))
+    }
+
+    fn decrypt(&self, decrypt_op: DecryptionOperation<'_>) -> Box<dyn PrivateKeyOperation> {
+        Box::new(AsyncPrivateKeyOperationAdapter(
+            self.0.decrypt(decrypt_op.ciphertext),
+        ))
+    }
+}
+
+struct AsyncPrivateKeyOperationAdapter<Fut>(Fut);
+
+impl<Fut> PrivateKeyOperation for AsyncPrivateKeyOperationAdapter<Fut>
+where
+    Fut: Unpin + Send + Sync + Future<Output = Option<Vec<u8>>>,
+{
+    fn complete(
+        &mut self,
+        context: Option<&mut Context<'_>>,
+        output: &mut [u8],
+    ) -> PrivateKeyOperationResult {
+        let Some(cx) = context else {
+            return PrivateKeyOperationResult::Error;
+        };
+        match Pin::new(&mut self.0).poll(cx) {
+            Poll::Ready(None) => PrivateKeyOperationResult::Error,
+            Poll::Ready(Some(res)) => {
+                if res.len() > output.len() {
+                    PrivateKeyOperationResult::Error
+                } else {
+                    output[..res.len()].copy_from_slice(&res);
+                    PrivateKeyOperationResult::Success(res.len())
+                }
+            }
+            Poll::Pending => PrivateKeyOperationResult::Pending,
+        }
+    }
 }
 
 bssl_macros::bssl_enum! {
@@ -613,12 +791,26 @@ impl VerifyCertificateContext {
         let list = call_slice_getter!(bssl_sys::SSL_get0_signed_cert_timestamp_list, self.ptr())?;
         (!list.is_empty()).then_some(list)
     }
+
+    /// Get the Raw Public Key offered by the peer in the `ClientHello`.
+    pub fn get_peer_raw_public_key(&self) -> Option<Vec<u8>> {
+        let pkey = unsafe {
+            // Safety:
+            // - `self.ptr()` is a valid `SSL` handle.
+            // - `pkey` does not escape the current function frame.
+            NonNull::new(bssl_sys::SSL_get0_peer_rpk(self.ptr()))?
+        };
+        Some(marshal_evp_into_spki(pkey))
+    }
 }
 
 /// Custom certificate verification callback.
 ///
 /// It is recommended to avoid panicking in the trait implementation.
 /// A panic in this callback will lead to abort.
+///
+/// As a return value, one could use [`VerifyCertificateAccepted`] or [`VerifyCertificateRejected`]
+/// to deliver the results if the decision can be made immediately and synchronously.
 pub trait VerifyCertificate: Send + Sync {
     /// Decide whether a certificate chain is acceptable.
     ///
@@ -648,6 +840,26 @@ pub enum VerifyResult {
     Pending,
     /// The certificate chain is rejected possibly with an alert.
     Reject(Option<AlertDescription>),
+}
+
+/// Certificate verifier accepts the offered certificates.
+#[derive(Debug, Clone, Copy)]
+pub struct VerifyCertificateAccepted;
+
+impl VerifyCertificateTask for VerifyCertificateAccepted {
+    fn complete(&mut self, _: Option<&mut Context<'_>>) -> VerifyResult {
+        VerifyResult::Accept
+    }
+}
+
+/// Certificate verifier rejects the offered certificates.
+#[derive(Debug, Clone, Copy)]
+pub struct VerifyCertificateRejected(pub Option<AlertDescription>);
+
+impl VerifyCertificateTask for VerifyCertificateRejected {
+    fn complete(&mut self, _: Option<&mut Context<'_>>) -> VerifyResult {
+        VerifyResult::Reject(self.0)
+    }
 }
 
 /// Asynchronous custom certificate verification.
@@ -709,67 +921,55 @@ where
 /// Certificate chain iterator.
 ///
 /// This iterator will supply the peer leaf certificate as the first element in the chain, if any.
+pub type CertificateChainIterator<'a> = CryptoBufferIterator<'a, Certificate>;
+
 #[derive(Clone, Copy)]
-pub struct CertificateChainIterator<'a> {
-    certs: *const bssl_sys::stack_st_CRYPTO_BUFFER,
-    len: usize,
-    curr: usize,
-    _p: PhantomData<&'a ()>,
+#[doc(hidden)]
+pub struct CryptoBufferIterator<'a, T> {
+    inner: StackIterator<'a, bssl_sys::CRYPTO_BUFFER>,
+    _p: PhantomData<fn() -> T>,
 }
 
-impl<'a> CertificateChainIterator<'a> {
-    /// Safety: caller must ensure that `certs` is outlived by,
-    /// or in other words stays alive as long as, `'a`.
-    pub(crate) unsafe fn new(certs: *const bssl_sys::stack_st_CRYPTO_BUFFER) -> Self {
-        let len = if certs.is_null() {
-            0
-        } else {
-            unsafe {
-                // Safety: `certs` is valid now.
-                bssl_sys::sk_CRYPTO_BUFFER_num(certs)
-            }
-        };
+impl<T: CryptoBufferWrapper> CryptoBufferIterator<'_, T> {
+    /// Safety: caller must ensure that `sk` outlives `'a`.
+    pub(crate) unsafe fn new(sk: *const bssl_sys::stack_st_CRYPTO_BUFFER) -> Self {
         Self {
-            certs,
-            len,
-            curr: 0,
+            inner: unsafe {
+                // Safety: `sk` outlives `'a` per pre-condition.
+                StackIterator::new(sk)
+            },
             _p: PhantomData,
         }
     }
 }
 
-impl<'a> Iterator for CertificateChainIterator<'a> {
-    type Item = Certificate;
+impl<T: CryptoBufferWrapper> Iterator for CryptoBufferIterator<'_, T> {
+    type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.curr >= self.len {
-            return None;
-        }
-        let cert = unsafe {
-            // Safety: `self.certs` is still valid now and `self.curr` is within the bound.
-            bssl_sys::sk_CRYPTO_BUFFER_value(self.certs, self.curr)
-        };
-        self.curr += 1;
-        let Some(cert) = NonNull::new(cert) else {
-            // Fuse the iterator.
-            self.curr = self.len;
-            return None;
-        };
-        unsafe {
-            // Safety: `cert` is valid here.
-            bssl_sys::CRYPTO_BUFFER_up_ref(cert.as_ptr());
-        }
-        Some(Certificate(cert))
+        self.inner
+            .next()
+            .map(|buf| unsafe {
+                // Safety: we are only bumping the ref-count
+                bssl_sys::CRYPTO_BUFFER_dup_ref(buf)
+            })
+            .and_then(|ptr| NonNull::new(ptr as *mut _))
+            .map(|buf| {
+                unsafe {
+                    // Safety: `buf` is now exclusively owned.
+                    T::from_crypto_buffer(buf)
+                }
+            })
     }
 }
 
-impl ExactSizeIterator for CertificateChainIterator<'_> {
+impl<T: CryptoBufferWrapper> ExactSizeIterator for CryptoBufferIterator<'_, T> {
     fn len(&self) -> usize {
-        self.len
+        self.inner.len()
     }
 }
 
-impl FusedIterator for CertificateChainIterator<'_> {}
+impl<T: CryptoBufferWrapper> FusedIterator for CryptoBufferIterator<'_, T> {}
 
 /// Safety: this callback stub must be installed with a context object allocated
 /// as a `Box<dyn VerifyCertificate>`.
@@ -895,6 +1095,44 @@ impl TryFrom<c_int> for CertificateVerificationMode {
         } else {
             Err(mode)
         }
+    }
+}
+
+pub(crate) fn marshal_evp_into_spki(pkey: NonNull<bssl_sys::EVP_PKEY>) -> Vec<u8> {
+    let buffer = bssl_crypto::cbb_to_buffer(64, |cbb| {
+        assert_eq!(
+            unsafe {
+                // Safety:
+                // - `cbb` is a valid pointer to `CBB` provided by `cbb_to_buffer`.
+                // - `pkey` is a valid pointer to `EVP_PKEY`.
+                bssl_sys::EVP_marshal_public_key(cbb, pkey.as_ptr())
+            },
+            1
+        );
+    });
+    buffer.as_ref().to_vec()
+}
+
+crypto_buffer_wrapper! {
+    /// A name `DistinguishedName` encoded into DER per [RFC 5280].
+    /// Typically this is used to enclose a certificate authority name.
+    ///
+    /// [RFC 5280]: <https://datatracker.ietf.org/doc/html/rfc5280#appendix-A.1>
+    pub struct DistinguishedName
+}
+
+impl DistinguishedName {
+    pub(crate) fn into_crypto_buffer_stack(
+        names: impl IntoIterator<Item = Self>,
+    ) -> *mut bssl_sys::stack_st_CRYPTO_BUFFER {
+        let mut sk = Stack::new();
+        for name in names {
+            unsafe {
+                // Safety: `name` is owned at the moment.
+                sk.push(name.into_raw());
+            }
+        }
+        sk.into_raw()
     }
 }
 
