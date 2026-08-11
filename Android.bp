@@ -428,6 +428,7 @@ cc_library_static {
         "//external/open-dice",
         "//packages/modules/Virtualization:__subpackages__",
     ],
+    cflags: ["-Os"],
 
     // b/336916369: This library gets linked into a rust rlib.  Disable LTO
     // until cross-language lto is supported.
