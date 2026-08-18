@@ -3,6 +3,7 @@
 // probably something that should be changed.
 
 package {
+    default_team: "trendy_team_java_core_libraries",
     default_visibility: ["//visibility:private"],
     default_applicable_licenses: ["external_boringssl_license"],
 }
@@ -427,6 +428,7 @@ cc_library_static {
         "//external/open-dice",
         "//packages/modules/Virtualization:__subpackages__",
     ],
+    cflags: ["-Os"],
 
     // b/336916369: This library gets linked into a rust rlib.  Disable LTO
     // until cross-language lto is supported.
@@ -777,6 +779,7 @@ rust_bindgen {
     crate_name: "bssl_sys_raw",
     host_supported: true,
     wrapper_src: "src/rust/bssl-sys/wrapper.h",
+    relative_include: true,
     vendor_available: true,
     product_available: true,
     ota_recovery_ramdisk_available: true,
@@ -800,8 +803,10 @@ rust_bindgen {
 cc_library_static {
     name: "libbssl_sys_raw_staticfns",
     srcs: [":libbssl_sys_raw"],
-    include_dirs: ["."],
-    local_include_dirs: ["include/"],
+    local_include_dirs: [
+        "src/include",
+        "src/rust/bssl-sys",
+    ],
     host_supported: true,
     vendor_available: true,
     ota_recovery_ramdisk_available: true,
@@ -837,6 +842,7 @@ rust_bindgen {
         "com.android.compos",
         "com.android.virt",
     ],
+    relative_include: true,
     handle_static_inline: true,
     whole_static_libs: ["libcrypto_baremetal"],
     static_inline_library: "libbssl_sys_raw_nostd_staticfns",
@@ -845,8 +851,10 @@ rust_bindgen {
 cc_library_static {
     name: "libbssl_sys_raw_nostd_staticfns",
     srcs: [":libbssl_sys_raw_nostd"],
-    include_dirs: ["."],
-    local_include_dirs: ["include/"],
+    local_include_dirs: [
+        "src/include",
+        "src/rust/bssl-sys",
+    ],
     apex_available: [
         "com.android.compos",
         "com.android.virt",
@@ -885,6 +893,7 @@ rust_defaults {
         "//system/security/prng_seeder",
         // [POC: vikramgaur@, bug component id: 1424296]
         "//tools/security/remote_provisioning/hwtrust",
+        "//system/software_defined_vehicle/platform/init_open_dice",
     ],
     srcs: [
         "src/rust/bssl-sys/src/lib.rs",
