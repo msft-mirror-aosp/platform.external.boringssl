@@ -468,6 +468,7 @@ TEST(ASN1Test, Integer) {
     UniquePtr<ASN1_INTEGER> integer(
         d2i_ASN1_INTEGER(nullptr, &ptr, invalid.size()));
     EXPECT_FALSE(integer);
+    EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, ASN1_R_INVALID_INTEGER}}));
   }
 
   // Callers expect `ASN1_INTEGER_get` and `ASN1_ENUMERATED_get` to return zero
@@ -550,6 +551,12 @@ TEST(ASN1Test, SerializeEmbeddedBoolean) {
   val->ca = 0;
   TestSerialize(val.get(), i2d_BASIC_CONSTRAINTS, kLeaf);
 
+  const uint8_t *inp = kLeaf;
+  UniquePtr<BASIC_CONSTRAINTS> parsed(
+      d2i_BASIC_CONSTRAINTS(nullptr, &inp, sizeof(kLeaf)));
+  ASSERT_TRUE(parsed);
+  EXPECT_EQ(parsed->ca, ASN1_BOOLEAN_FALSE);
+
   // TRUE should always be encoded as 0xff, independent of what value the caller
   // placed in the `ASN1_BOOLEAN`.
   static const uint8_t kCA[] = {0x30, 0x03, 0x01, 0x01, 0xff};
@@ -559,6 +566,19 @@ TEST(ASN1Test, SerializeEmbeddedBoolean) {
   TestSerialize(val.get(), i2d_BASIC_CONSTRAINTS, kCA);
   val->ca = 0x100;
   TestSerialize(val.get(), i2d_BASIC_CONSTRAINTS, kCA);
+
+  inp = kCA;
+  parsed.reset(d2i_BASIC_CONSTRAINTS(nullptr, &inp, sizeof(kCA)));
+  ASSERT_TRUE(parsed);
+  EXPECT_EQ(parsed->ca, ASN1_BOOLEAN_TRUE);
+
+  // We currently allow non-DER encodings of TRUE. (We should reject these.)
+  // When this happens, the in-memory representation is still uniform.
+  static const uint8_t kCAWrong[] = {0x30, 0x03, 0x01, 0x01, 0x01};
+  inp = kCAWrong;
+  parsed.reset(d2i_BASIC_CONSTRAINTS(nullptr, &inp, sizeof(kCAWrong)));
+  ASSERT_TRUE(parsed);
+  EXPECT_EQ(parsed->ca, ASN1_BOOLEAN_TRUE);
 }
 
 static std::vector<uint8_t> EmbedParamInAlgorithmIdentifier(
@@ -842,25 +862,29 @@ TEST(ASN1Test, BitString) {
     }
   }
 
-  const std::vector<uint8_t> kInvalidInputs[] = {
+  const struct {
+    std::vector<uint8_t> in;
+    int err_reason;
+  } kInvalidInputs[] = {
       // Wrong tag
-      {0x04, 0x01, 0x00},
+      {{0x04, 0x01, 0x00}, ASN1_R_DECODE_ERROR},
       // Missing leading byte
-      {0x03, 0x00},
+      {{0x03, 0x00}, ASN1_R_STRING_TOO_SHORT},
       // Leading byte too high
-      {0x03, 0x02, 0x08, 0x00},
-      {0x03, 0x02, 0xff, 0x00},
+      {{0x03, 0x02, 0x08, 0x00}, ASN1_R_INVALID_BIT_STRING_BITS_LEFT},
+      {{0x03, 0x02, 0xff, 0x00}, ASN1_R_INVALID_BIT_STRING_BITS_LEFT},
       // Empty bit strings must have a zero leading byte.
-      {0x03, 0x01, 0x01},
+      {{0x03, 0x01, 0x01}, ASN1_R_INVALID_BIT_STRING_PADDING},
       // Unused bits must all be zero.
-      {0x03, 0x02, 0x06, 0xc1 /* 0b11000001 */},
+      {{0x03, 0x02, 0x06, 0xc1 /* 0b11000001 */}, ASN1_R_INVALID_BIT_STRING_PADDING},
   };
   for (const auto &test : kInvalidInputs) {
-    SCOPED_TRACE(Bytes(test));
-    const uint8_t *ptr = test.data();
+    SCOPED_TRACE(Bytes(test.in));
+    const uint8_t *ptr = test.in.data();
     UniquePtr<ASN1_BIT_STRING> val(
-        d2i_ASN1_BIT_STRING(nullptr, &ptr, test.size()));
+        d2i_ASN1_BIT_STRING(nullptr, &ptr, test.in.size()));
     EXPECT_FALSE(val);
+    EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, test.err_reason}}));
   }
 }
 
@@ -912,8 +936,11 @@ TEST(ASN1Test, SetBit) {
 
   // Negative bits do not exist.
   EXPECT_FALSE(ASN1_BIT_STRING_set_bit(val.get(), -1, 0));
+  EXPECT_TRUE(
+      ErrorsAreAndClear({{ERR_LIB_ASN1, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED}}));
   EXPECT_FALSE(ASN1_BIT_STRING_set_bit(val.get(), -1, 1));
-  ERR_clear_error();
+  EXPECT_TRUE(
+      ErrorsAreAndClear({{ERR_LIB_ASN1, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED}}));
 
   // Bits may be set beyond the end of the string.
   ASSERT_TRUE(ASN1_BIT_STRING_set_bit(val.get(), 63, 1));
@@ -976,8 +1003,7 @@ TEST(ASN1Test, SetBitString) {
   UniquePtr<ASN1_BIT_STRING> val(ASN1_BIT_STRING_new());
   ASSERT_TRUE(val);
   const uint8_t kBytesf000[] = {0xf0, 0x00};
-  ASSERT_TRUE(
-      ASN1_STRING_set(val.get(), kBytesf000, sizeof(kBytesf000)));
+  ASSERT_TRUE(ASN1_STRING_set(val.get(), kBytesf000, sizeof(kBytesf000)));
   static const uint8_t kBitStringf000[] = {0x03, 0x03, 0x00, 0xf0, 0x00};
   TestSerialize(val.get(), i2d_ASN1_BIT_STRING, kBitStringf000);
 
@@ -1052,7 +1078,7 @@ TEST(ASN1Test, StringToUTF8) {
       {{0, 0, 0, 88, 0, 0, 0xfe, 0xff},
        V_ASN1_UNIVERSALSTRING,
        "X\xef\xbb\xbf"},
-      // The maximum code-point should pass though.
+      // The maximum code-point should pass through.
       {{0, 16, 0xff, 0xfd}, V_ASN1_UNIVERSALSTRING, "\xf4\x8f\xbf\xbd"},
       // Values outside the Unicode space should not.
       {{0, 17, 0, 0}, V_ASN1_UNIVERSALSTRING, nullptr},
@@ -1207,6 +1233,7 @@ TEST(ASN1Test, SetTime) {
       EXPECT_EQ(tt, t.time);
     } else {
       EXPECT_FALSE(choice);
+      EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, std::nullopt}}));
     }
   }
 }
@@ -2141,7 +2168,11 @@ TEST(ASN1Test, StringByCustomNID) {
   // Overriding existing entries, built-in or custom, is an error.
   EXPECT_FALSE(
       ASN1_STRING_TABLE_add(NID_countryName, -1, -1, DIRSTRING_TYPE, 0));
+  EXPECT_TRUE(
+      ErrorsAreAndClear({{ERR_LIB_ASN1, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED}}));
   EXPECT_FALSE(ASN1_STRING_TABLE_add(nid1, -1, -1, DIRSTRING_TYPE, 0));
+  EXPECT_TRUE(
+      ErrorsAreAndClear({{ERR_LIB_ASN1, ERR_R_SHOULD_NOT_HAVE_BEEN_CALLED}}));
 }
 
 #if defined(OPENSSL_THREADS)
@@ -2203,12 +2234,14 @@ TEST(ASN1Test, InvalidChoice) {
 // Encoding NID-only `ASN1_OBJECT`s should fail.
 TEST(ASN1Test, InvalidObject) {
   EXPECT_EQ(-1, i2d_ASN1_OBJECT(OBJ_nid2obj(NID_kx_ecdhe), nullptr));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, ASN1_R_ILLEGAL_OBJECT}}));
 
   UniquePtr<X509_ALGOR> alg(X509_ALGOR_new());
   ASSERT_TRUE(alg);
   ASSERT_TRUE(X509_ALGOR_set0(alg.get(), OBJ_nid2obj(NID_kx_ecdhe),
                               V_ASN1_UNDEF, nullptr));
   EXPECT_EQ(-1, i2d_X509_ALGOR(alg.get(), nullptr));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, ASN1_R_ILLEGAL_OBJECT}}));
 }
 
 // Encoding invalid `ASN1_TYPE`s should fail. `ASN1_TYPE`s are
@@ -2237,11 +2270,13 @@ TEST(ASN1Test, InvalidMSTRING) {
   ASSERT_TRUE(obj);
   EXPECT_EQ(-1, obj->type);
   EXPECT_EQ(-1, i2d_ASN1_TIME(obj.get(), nullptr));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, ASN1_R_WRONG_TYPE}}));
 
   obj.reset(DIRECTORYSTRING_new());
   ASSERT_TRUE(obj);
   EXPECT_EQ(-1, obj->type);
   EXPECT_EQ(-1, i2d_DIRECTORYSTRING(obj.get(), nullptr));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, ASN1_R_WRONG_TYPE}}));
 }
 
 TEST(ASN1Test, TypeMismatch) {
@@ -2632,6 +2667,7 @@ void ExpectNoParse(T *(*d2i)(T **, const uint8_t **, long),
   const uint8_t *ptr = in.data();
   UniquePtr<T> obj(d2i(nullptr, &ptr, in.size()));
   EXPECT_FALSE(obj);
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, ASN1_R_DECODE_ERROR}}));
 }
 
 // The zero tag, constructed or primitive, is reserved and should rejected by
@@ -3087,7 +3123,7 @@ TEST(ASN1Test, OptionalAndDefaultBooleans) {
   EXPECT_EQ(obj->default_true, ASN1_BOOLEAN_TRUE);
   EXPECT_EQ(obj->default_false, ASN1_BOOLEAN_FALSE);
 
-  // Include the optinonal fields instead.
+  // Include the optional fields instead.
   static const uint8_t kFieldsIncluded[] = {0x30, 0x0c, 0x01, 0x01, 0xff,
                                             0x81, 0x01, 0x00, 0x82, 0x01,
                                             0x00, 0x83, 0x01, 0xff};
@@ -3122,18 +3158,24 @@ ASN1_ITEM_TEMPLATE_END(EXPLICIT_OCTET_STRING)
 
 // DOUBLY_TAGGED is
 //   SEQUENCE {
-//     b   [3] EXPLICIT [1] EXPLICIT BOOLEAN OPTIONAL,
-//     oct [4] EXPLICIT [2] EXPLICIT OCTET STRING OPTIONAL }
+//     b    [3] EXPLICIT [1] EXPLICIT BOOLEAN OPTIONAL,
+//     oct  [4] EXPLICIT [2] EXPLICIT OCTET STRING OPTIONAL
+//     b2   [5] IMPLICIT [1] EXPLICIT BOOLEAN OPTIONAL,
+//     oct2 [6] IMPLICIT [2] EXPLICIT OCTET STRING OPTIONAL }
 // with explicit tagging.
 struct DOUBLY_TAGGED {
   ASN1_BOOLEAN b;
   ASN1_OCTET_STRING *oct;
+  ASN1_BOOLEAN b2;
+  ASN1_OCTET_STRING *oct2;
 };
 
 DECLARE_ASN1_FUNCTIONS(DOUBLY_TAGGED)
 ASN1_SEQUENCE(DOUBLY_TAGGED) = {
     ASN1_EXP_OPT(DOUBLY_TAGGED, b, EXPLICIT_BOOLEAN, 3),
     ASN1_EXP_OPT(DOUBLY_TAGGED, oct, EXPLICIT_OCTET_STRING, 4),
+    ASN1_IMP_OPT(DOUBLY_TAGGED, b2, EXPLICIT_BOOLEAN, 5),
+    ASN1_IMP_OPT(DOUBLY_TAGGED, oct2, EXPLICIT_OCTET_STRING, 6),
 } ASN1_SEQUENCE_END(DOUBLY_TAGGED)
 IMPLEMENT_ASN1_FUNCTIONS(DOUBLY_TAGGED)
 
@@ -3143,25 +3185,30 @@ TEST(ASN1Test, DoublyTagged) {
   std::unique_ptr<DOUBLY_TAGGED, decltype(&DOUBLY_TAGGED_free)> obj(
       nullptr, DOUBLY_TAGGED_free);
 
-  // Both fields missing.
+  // All fields missing.
   static const uint8_t kOmitted[] = {0x30, 0x00};
   const uint8_t *inp = kOmitted;
   obj.reset(d2i_DOUBLY_TAGGED(nullptr, &inp, sizeof(kOmitted)));
   ASSERT_TRUE(obj);
   EXPECT_EQ(obj->b, -1);
   EXPECT_FALSE(obj->oct);
+  EXPECT_EQ(obj->b2, -1);
+  EXPECT_FALSE(obj->oct2);
   TestSerialize(obj.get(), i2d_DOUBLY_TAGGED, kOmitted);
 
-  // Both fields present, true and the empty string.
-  static const uint8_t kTrueEmpty[] = {0x30, 0x0d, 0xa3, 0x05, 0xa1,
-                                       0x03, 0x01, 0x01, 0xff, 0xa4,
-                                       0x04, 0xa2, 0x02, 0x04, 0x00};
+  // All fields present, true and the empty string.
+  static const uint8_t kTrueEmpty[] = {
+      0x30, 0x16, 0xa3, 0x05, 0xa1, 0x03, 0x01, 0x01, 0xff, 0xa4, 0x04, 0xa2,
+      0x02, 0x04, 0x00, 0xa5, 0x03, 0x01, 0x01, 0xff, 0xa6, 0x02, 0x04, 0x00};
   inp = kTrueEmpty;
   obj.reset(d2i_DOUBLY_TAGGED(nullptr, &inp, sizeof(kTrueEmpty)));
   ASSERT_TRUE(obj);
   EXPECT_EQ(obj->b, 0xff);
   ASSERT_TRUE(obj->oct);
   EXPECT_EQ(ASN1_STRING_length(obj->oct), 0);
+  EXPECT_EQ(obj->b2, 0xff);
+  ASSERT_TRUE(obj->oct2);
+  EXPECT_EQ(ASN1_STRING_length(obj->oct2), 0);
   TestSerialize(obj.get(), i2d_DOUBLY_TAGGED, kTrueEmpty);
 }
 

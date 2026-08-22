@@ -534,6 +534,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/bn/bn_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cmac_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/ec_test.cc
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-nistz_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_test.cc
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/entropy/jitter_test.cc
@@ -643,7 +644,7 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cavp_aes192_cmac_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/cmac/cavp_aes256_cmac_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/ec_scalar_base_mult_tests.txt
-  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-tests.txt
+  ${BORINGSSL_ROOT}src/crypto/fipsmodule/ec/p256-nistz_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_sign_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/ecdsa/ecdsa_verify_tests.txt
   ${BORINGSSL_ROOT}src/crypto/fipsmodule/keccak/keccak_tests.txt
@@ -867,6 +868,14 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mldsa_87_sign_noseed_test.txt
   ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mldsa_87_sign_seed_test.txt
   ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mldsa_87_verify_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mlkem_1024_encaps_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mlkem_1024_keygen_seed_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mlkem_1024_semi_expanded_decaps_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mlkem_1024_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mlkem_768_encaps_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mlkem_768_keygen_seed_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mlkem_768_semi_expanded_decaps_test.txt
+  ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/mlkem_768_test.txt
   ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/primality_test.txt
   ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha1_mgf1sha1_test.txt
   ${BORINGSSL_ROOT}src/third_party/wycheproof_testvectors/rsa_oaep_2048_sha224_mgf1sha1_test.txt
