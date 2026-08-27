@@ -30,10 +30,6 @@ use bssl_tls::{
     },
     errors::Error, //
 };
-use bssl_tls_tokio::{
-    TokioDatagramIo,
-    new_std_datagram_with_tokio, //
-};
 use bssl_x509::{
     certificates::X509Certificate,
     keys::PrivateKey,
@@ -41,9 +37,15 @@ use bssl_x509::{
     store::X509StoreBuilder, //
 };
 
-const CA: &[u8] = include_bytes!("../../test-data/BoringSSLCATest.crt");
-const RSA_SERVER_CERT: &[u8] = include_bytes!("../../test-data/BoringSSLServerTest-RSA.crt");
-const RSA_SERVER_KEY: &[u8] = include_bytes!("../../test-data/BoringSSLServerTest-RSA.key");
+use super::{
+    CA,
+    RSA_SERVER_CERT,
+    RSA_SERVER_KEY, //
+};
+use crate::{
+    TokioDatagramIo,
+    new_std_datagram_with_tokio, //
+};
 
 fn dumb_dtls_server_client() -> Result<
     (
@@ -66,7 +68,7 @@ fn dumb_dtls_server_client() -> Result<
     };
     server_ctx_builder.with_credential(server_cred.unwrap())?;
     let server_ctx = server_ctx_builder.build();
-    let server_conn = server_ctx.new_server_connection(None)?.build();
+    let server_conn = server_ctx.new_server_connection().build();
 
     let mut client_ctx_builder = TlsContextBuilder::new_dtls();
     let ca = X509Certificate::parse_one_from_pem(CA)?;
@@ -75,7 +77,7 @@ fn dumb_dtls_server_client() -> Result<
     let cert_store = cert_store.build();
     client_ctx_builder.with_certificate_store(&cert_store);
     let client_ctx = client_ctx_builder.build();
-    let client_conn = client_ctx.new_client_connection(None)?.build();
+    let client_conn = client_ctx.new_client_connection().build();
 
     Ok((server_conn, client_conn))
 }
@@ -88,11 +90,7 @@ async fn async_ping_pong(
     use std::time::Duration;
 
     let task = tokio::spawn(async move {
-        server_conn
-            .in_handshake()
-            .unwrap()
-            .async_handshake()
-            .await?;
+        server_conn.async_handshake().await?;
 
         let mut message = [0; 21];
         let mut read_bytes = 0;
@@ -117,11 +115,7 @@ async fn async_ping_pong(
         Ok::<_, Error>(())
     });
 
-    client_conn
-        .in_handshake()
-        .unwrap()
-        .async_handshake()
-        .await?;
+    client_conn.async_handshake().await?;
     client_conn
         .as_pin_mut()
         .async_write(b"BoringSSL is awesome!")
@@ -148,7 +142,9 @@ async fn async_ping_pong(
     Ok(())
 }
 
+#[cfg(unix)]
 #[tokio::test]
+#[ignore = "https://crbug.com/532601068"]
 async fn async_dtls() -> Result<(), Error> {
     let (mut server_conn, mut client_conn) = dumb_dtls_server_client().unwrap();
     let (server_sock, client_sock) = tokio::net::UnixDatagram::pair().unwrap();
@@ -158,7 +154,9 @@ async fn async_dtls() -> Result<(), Error> {
     async_ping_pong(server_conn, client_conn).await
 }
 
+#[cfg(unix)]
 #[tokio::test]
+#[ignore = "https://crbug.com/532601068"]
 async fn async_dtls_over_fd() -> Result<(), Error> {
     let (mut server_conn, mut client_conn) = dumb_dtls_server_client().unwrap();
     let (server_sock, client_sock) = std::os::unix::net::UnixDatagram::pair().unwrap();
