@@ -351,6 +351,8 @@ const Flag<TestConfig> *FindFlag(const char *name) {
         StringFlag("-trust-cert", &TestConfig::trust_cert),
         StringFlag("-expect-server-name", &TestConfig::expect_server_name),
         BoolFlag("-enable-ech-grease", &TestConfig::enable_ech_grease),
+        BoolFlag("-reject-unusable-ech-config",
+                 &TestConfig::reject_unusable_ech_config),
         Base64VectorFlag("-ech-server-config", &TestConfig::ech_server_configs),
         Base64VectorFlag("-ech-server-key", &TestConfig::ech_server_keys),
         IntVectorFlag("-ech-is-retry-config", &TestConfig::ech_is_retry_config),
@@ -538,9 +540,6 @@ const Flag<TestConfig> *FindFlag(const char *name) {
         IntFlag("-install-one-cert-compression-alg",
                 &TestConfig::install_one_cert_compression_alg),
         BoolFlag("-reverify-on-resume", &TestConfig::reverify_on_resume),
-        BoolFlag("-ignore-rsa-key-usage", &TestConfig::ignore_rsa_key_usage),
-        BoolFlag("-expect-key-usage-invalid",
-                 &TestConfig::expect_key_usage_invalid),
         BoolFlag("-is-handshaker-supported",
                  &TestConfig::is_handshaker_supported),
         BoolFlag("-handshaker-resume", &TestConfig::handshaker_resume),
@@ -632,7 +631,7 @@ const Flag<TestConfig> *FindFlag(const char *name) {
         CredentialFlag(SetValueFlag("-psk-importer-sha384",
                                     &CredentialConfig::psk_hash, EVP_sha384())),
         CredentialFlag(
-            Base64Flag("-trust-anchor-id", &CredentialConfig::trust_anchor_id)),
+            Base64Flag("-cert-properties", &CredentialConfig::cert_properties)),
         IntFlag("-private-key-delay-ms", &TestConfig::private_key_delay_ms),
         BoolFlag("-resumption-across-names-enabled",
                  &TestConfig::resumption_across_names_enabled),
@@ -1643,10 +1642,12 @@ static bssl::UniquePtr<SSL_CREDENTIAL> CredentialFromConfig(
     SSL_CREDENTIAL_set_must_match_issuer(cred.get(), 1);
   }
 
-  if (!cred_config.trust_anchor_id.empty()) {
-    if (!SSL_CREDENTIAL_set1_trust_anchor_id(
-            cred.get(), cred_config.trust_anchor_id.data(),
-            cred_config.trust_anchor_id.size())) {
+  if (!cred_config.cert_properties.empty()) {
+    bssl::UniquePtr<CRYPTO_BUFFER> buf(
+        CRYPTO_BUFFER_new(cred_config.cert_properties.data(),
+                          cred_config.cert_properties.size(), nullptr));
+    if (buf == nullptr ||
+        !SSL_CREDENTIAL_set1_certificate_properties(cred.get(), buf.get())) {
       return nullptr;
     }
   }
@@ -2123,6 +2124,7 @@ bssl::UniquePtr<SSL_CTX> TestConfig::SetupCtx(SSL_CTX *old_ctx) const {
 
   if (enable_grease) {
     SSL_CTX_set_grease_enabled(ssl_ctx.get(), 1);
+    SSL_CTX_set_grease_sigalgs_enabled(ssl_ctx.get(), 1);
   }
 
   if (permute_extensions) {
@@ -2428,9 +2430,6 @@ bssl::UniquePtr<SSL> TestConfig::NewSSL(
   if (reverify_on_resume) {
     SSL_CTX_set_reverify_on_resume(ssl_ctx, 1);
   }
-  if (ignore_rsa_key_usage) {
-    SSL_set_enforce_rsa_key_usage(ssl.get(), 0);
-  }
   if (no_tls13) {
     SSL_set_options(ssl.get(), SSL_OP_NO_TLSv1_3);
   }
@@ -2454,6 +2453,9 @@ bssl::UniquePtr<SSL> TestConfig::NewSSL(
   }
   if (enable_ech_grease) {
     SSL_set_enable_ech_grease(ssl.get(), 1);
+  }
+  if (reject_unusable_ech_config) {
+    SSL_set_reject_unusable_ech_config(ssl.get(), 1);
   }
   if (!ech_config_list.empty() &&
       !SSL_set1_ech_config_list(ssl.get(), ech_config_list.data(),
