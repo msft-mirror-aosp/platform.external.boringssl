@@ -1,4 +1,11 @@
 on early-init && property:ro.product.cpu.abilist32=*
-    exec_start boringssl_self_test32_vendor
+    start boringssl_self_test32_vendor
+
 on early-init && property:ro.product.cpu.abilist64=*
-    exec_start boringssl_self_test64_vendor
+    start boringssl_self_test64_vendor
+
+on post-early-init && property:ro.product.cpu.abilist32=*
+    wait_for_prop init.svc.boringssl_self_test32_vendor "stopped"
+
+on post-early-init && property:ro.product.cpu.abilist64=*
+    wait_for_prop init.svc.boringssl_self_test64_vendor "stopped"
