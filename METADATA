@@ -6,4 +6,9 @@ third_party {
     value: "https://boringssl.googlesource.com/boringssl"
   }
   license_type: NOTICE
+  security: {
+    tag: "android:on_device_usage"
+    tag: "android:privilege_level:privileged"
+    tag: "android:untrusted_input"
+  }
 }
