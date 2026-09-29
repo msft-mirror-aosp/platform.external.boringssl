@@ -135,7 +135,6 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/fuzzer_mode.cc
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke.cc
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss.cc
-  ${BORINGSSL_ROOT}src/crypto/kyber/kyber.cc
   ${BORINGSSL_ROOT}src/crypto/lhash/lhash.cc
   ${BORINGSSL_ROOT}src/crypto/md4/md4.cc
   ${BORINGSSL_ROOT}src/crypto/md5/md5.cc
@@ -235,6 +234,7 @@ set(crypto_sources
   ${BORINGSSL_ROOT}src/crypto/x509/x509_def.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_ext.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_lu.cc
+  ${BORINGSSL_ROOT}src/crypto/x509/x509_mtc.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_obj.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_req.cc
   ${BORINGSSL_ROOT}src/crypto/x509/x509_set.cc
@@ -516,6 +516,7 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/constant_time_test.cc
   ${BORINGSSL_ROOT}src/crypto/cpu_arm_linux_test.cc
   ${BORINGSSL_ROOT}src/crypto/crypto_test.cc
+  ${BORINGSSL_ROOT}src/crypto/curve25519/curve25519_test.cc
   ${BORINGSSL_ROOT}src/crypto/curve25519/ed25519_test.cc
   ${BORINGSSL_ROOT}src/crypto/curve25519/spake25519_test.cc
   ${BORINGSSL_ROOT}src/crypto/curve25519/x25519_test.cc
@@ -547,7 +548,6 @@ set(crypto_test_sources
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test.cc
   ${BORINGSSL_ROOT}src/crypto/hrss/hrss_test.cc
   ${BORINGSSL_ROOT}src/crypto/impl_dispatch_test.cc
-  ${BORINGSSL_ROOT}src/crypto/kyber/kyber_test.cc
   ${BORINGSSL_ROOT}src/crypto/lhash/lhash_test.cc
   ${BORINGSSL_ROOT}src/crypto/md5/md5_test.cc
   ${BORINGSSL_ROOT}src/crypto/mem_test.cc
@@ -653,7 +653,6 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/hmac/hmac_tests.txt
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test_vectors.txt
   ${BORINGSSL_ROOT}src/crypto/hpke/hpke_test_vectors_pq.txt
-  ${BORINGSSL_ROOT}src/crypto/kyber/kyber_tests.txt
   ${BORINGSSL_ROOT}src/crypto/mldsa/mldsa_nist_keygen_44_tests.txt
   ${BORINGSSL_ROOT}src/crypto/mldsa/mldsa_nist_keygen_65_tests.txt
   ${BORINGSSL_ROOT}src/crypto/mldsa/mldsa_nist_keygen_87_tests.txt
@@ -750,6 +749,26 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/x509/test/many_names1.pem
   ${BORINGSSL_ROOT}src/crypto/x509/test/many_names2.pem
   ${BORINGSSL_ROOT}src/crypto/x509/test/many_names3.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/ca_cert.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_10_0.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_10_1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_2034_0.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_2035_0.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_2_0.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_32_0.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_0.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_1.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_2.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_3.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_4.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_5.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_6.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_7.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_8.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_33_9.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/cert_5036_0.pem
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/large_merkle_tree_consistency_proof_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/x509/test/mtc/large_merkle_tree_inclusion_proof_tests.txt
   ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate.pem
   ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_any.pem
   ${BORINGSSL_ROOT}src/crypto/x509/test/policy_intermediate_duplicate.pem
