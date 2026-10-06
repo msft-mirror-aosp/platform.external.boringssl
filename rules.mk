@@ -34,8 +34,12 @@ LOCAL_CFLAGS_$(TARGET_2ND_ARCH) :=
 LOCAL_ADDITIONAL_DEPENDENCIES :=
 
 # get target_c_flags, target_c_includes, target_src_files
-MODULE_SRCDEPS += $(LOCAL_DIR)/crypto-sources.mk
-include $(LOCAL_DIR)/crypto-sources.mk
+MODULE_SRCDEPS += $(LOCAL_DIR)/src/gen/sources.mk
+include $(LOCAL_DIR)/src/gen/sources.mk
+
+LOCAL_CFLAGS += -I$(LOCAL_PATH)/src/include -Wno-unused-parameter -DBORINGSSL_ANDROID_SYSTEM
+LOCAL_ASFLAGS += -I$(LOCAL_PATH)/src/include -Wno-unused-parameter
+LOCAL_SRC_FILES += $(addprefix src/,$(boringssl_bcm_sources) $(boringssl_bcm_sources_asm) $(boringssl_crypto_sources) $(boringssl_crypto_sources_asm))
 
 # The AOSP stdatomic.h clang header does not build against musl. Disable C11
 # atomics.
@@ -54,19 +58,6 @@ MODULE_COMPILEFLAGS += $(MODULE_STATIC_ARMCAP)
 ifeq (true,$(call TOBOOL,$(OPENSSL_SMALL)))
 # Use space efficient options; mainly reduces precomputed lookup tables
 MODULE_DEFINES += OPENSSL_SMALL=1
-endif
-
-ifeq (false,$(call TOBOOL,$(ALLOW_FP_USE)))
-# chacha, ghash, vpaes, sha1, and sha256 assembly files use neon instructions,
-# which we aren't allowed to do in the kernel if ALLOW_FP_USE is disabled. This
-# means that the kernel can't use these functions, but we don't need to for now.
-# If someone ever tries to, we will get missing symbols during linking.
-LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/chacha/chacha-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
-LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/fipsmodule/ghash-neon-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
-LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/fipsmodule/vpaes-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
-LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/fipsmodule/sha1-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
-LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/fipsmodule/sha256-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
-LOCAL_SRC_FILES_$(ARCH) := $(filter-out linux-aarch64/crypto/test/trampoline-armv8.S,$(LOCAL_SRC_FILES_$(ARCH)))
 endif
 
 MODULE_SRCS += $(addprefix $(LOCAL_DIR)/,$(LOCAL_SRC_FILES))
