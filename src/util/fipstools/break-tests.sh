@@ -89,7 +89,7 @@ run_test_on_device() {
 }
 
 device_integrity_break_test() {
-  go run "$BORINGSSL/util/fipstools/break-hash.go" "$LIBCRYPTO_BIN" ./libcrypto.so
+  go run "$BORINGSSL/util/fipstools/break-hash.go" "$LIBCRYPTO_BREAK_BIN" ./libcrypto.so
   $RUN "$TEST_FIPS_BIN" ./libcrypto.so
   rm ./libcrypto.so
 }
