@@ -350,6 +350,14 @@ cc_library {
                 address: false,
             },
             inject_bssl_hash: true,
+            strip: {
+                keep_symbols_list: [
+                    "BORINGSSL_bcm_text_start",
+                    "BORINGSSL_bcm_text_end",
+                    "BORINGSSL_bcm_rodata_start",
+                    "BORINGSSL_bcm_rodata_end",
+                ],
+            },
             static: {
                 // Disable the static version of libcrypto, as it causes
                 // problems for FIPS certification.  Use libcrypto_static for
