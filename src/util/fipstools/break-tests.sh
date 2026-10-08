@@ -89,7 +89,7 @@ run_test_on_device() {
 }
 
 device_integrity_break_test() {
-  go run "$BORINGSSL/util/fipstools/break-hash.go" "$LIBCRYPTO_BREAK_BIN" ./libcrypto.so
+  go run "$BORINGSSL/util/fipstools/break-hash.go" "${LIBCRYPTO_SYM_BIN:-$LIBCRYPTO_BIN}" ./libcrypto.so
   $RUN "$TEST_FIPS_BIN" ./libcrypto.so
   rm ./libcrypto.so
 }
@@ -152,14 +152,17 @@ else # Device mode
   if [ "$TEST32BIT" ]; then
     TEST_FIPS_BIN="$ANDROID_PRODUCT_OUT/system/bin/test_fips32"
     LIBCRYPTO_BIN="$ANDROID_PRODUCT_OUT/system/lib/libcrypto.so"
+    LIBCRYPTO_SYM_BIN="$ANDROID_PRODUCT_OUT/symbols/system/lib/libcrypto.so"
     LIBCRYPTO_BREAK_BIN="$ANDROID_PRODUCT_OUT/system/lib/libcrypto_for_testing.so"
   else
     TEST_FIPS_BIN="$ANDROID_PRODUCT_OUT/system/bin/test_fips"
     LIBCRYPTO_BIN="$ANDROID_PRODUCT_OUT/system/lib64/libcrypto.so"
+    LIBCRYPTO_SYM_BIN="$ANDROID_PRODUCT_OUT/symbols/system/lib64/libcrypto.so"
     LIBCRYPTO_BREAK_BIN="$ANDROID_PRODUCT_OUT/system/lib64/libcrypto_for_testing.so"
   fi
   check_file "$TEST_FIPS_BIN"
   check_file "$LIBCRYPTO_BIN"
+  check_file "$LIBCRYPTO_SYM_BIN"
   check_file "$LIBCRYPTO_BREAK_BIN"
 
   test "$ANDROID_SERIAL" || die "ANDROID_SERIAL not set"
