@@ -44,11 +44,13 @@ fi
 rm -Rf src/.git
 rm -Rf src/fuzz
 rm -Rf src/third_party/googletest
-rm -Rf apple-aarch64 apple-arm apple-x86 apple-x86_64 ios-aarch64 ios-arm \
-   linux-aarch64 linux-arm linux-ppc64le linux-x86 linux-x86_64 win-aarch64 win-x86 win-x86_64
 
-python3 src/util/generate_build_files.py android android-cmake bazel cmake eureka
+python3 src/util/generate_build_files.py android cmake
 cp src/LICENSE NOTICE
+
+# TODO(b/503870633): Remove this line after BoringSSL is updated to no longer
+# generate sources.mk as part of generating sources.bp.
+rm sources.mk
 
 git add .
 git commit --no-verify -F $msgfile
