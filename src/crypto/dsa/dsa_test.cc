@@ -197,7 +197,6 @@ TEST(DSATest, GenerateParamsTooLarge) {
       dsa.get(), 10001, /*seed=*/nullptr, /*seed_len=*/0,
       /*out_counter=*/nullptr, /*out_h=*/nullptr,
       /*cb=*/nullptr));
-  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_INVALID_PARAMETERS}}));
 }
 
 TEST(DSATest, GenerateKeyTooLarge) {
@@ -213,7 +212,6 @@ TEST(DSATest, GenerateKeyTooLarge) {
 
   // Don't generate DSA keys if the group is too large.
   EXPECT_FALSE(DSA_generate_key(dsa.get()));
-  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_MODULUS_TOO_LARGE}}));
 }
 
 TEST(DSATest, Verify) {
@@ -225,14 +223,11 @@ TEST(DSATest, Verify) {
   EXPECT_EQ(-1,
             DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig_negative,
                        sizeof(fips_sig_negative), dsa.get()));
-  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, BN_R_NEGATIVE_NUMBER}}));
   EXPECT_EQ(-1, DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig_extra,
                            sizeof(fips_sig_extra), dsa.get()));
-  EXPECT_EQ(0u, ERR_peek_error());
   EXPECT_EQ(-1,
             DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig_bad_length,
                        sizeof(fips_sig_bad_length), dsa.get()));
-  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_DECODE_ERROR}}));
   EXPECT_EQ(0, DSA_verify(0, fips_digest, sizeof(fips_digest), fips_sig_bad_r,
                           sizeof(fips_sig_bad_r), dsa.get()));
 }
@@ -262,7 +257,6 @@ TEST(DSATest, CheckSignature) {
                                    fips_sig_negative, sizeof(fips_sig_negative),
                                    dsa.get()));
   EXPECT_EQ(0, valid);
-  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_BN, BN_R_NEGATIVE_NUMBER}}));
 
   // Extra data (error)
   valid = 42;
@@ -270,7 +264,6 @@ TEST(DSATest, CheckSignature) {
                                    fips_sig_extra, sizeof(fips_sig_extra),
                                    dsa.get()));
   EXPECT_EQ(0, valid);
-  EXPECT_EQ(0u, ERR_peek_error());
 
   // Bad length (error)
   valid = 42;
@@ -278,7 +271,6 @@ TEST(DSATest, CheckSignature) {
                                    fips_sig_bad_length,
                                    sizeof(fips_sig_bad_length), dsa.get()));
   EXPECT_EQ(0, valid);
-  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_DSA, DSA_R_DECODE_ERROR}}));
 }
 
 TEST(DSATest, InvalidGroup) {

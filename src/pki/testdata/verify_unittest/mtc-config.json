@@ -1,17 +1,9 @@
 {
-  "Version": "plants-04",
-  "ID": "32473.1",
-  "LogNumber": 1,
-  "Cosigners": [
-    {
-      "CosignerID": "32473.1",
-      "SignatureAlgorithm": "mldsa44",
-      "PrivateKey": "MDQCAQAwCwYJYIZIAWUDBAMRBCKAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f"
-    }
-  ],
+  "Version": "davidben-09",
+  "LogID": "32473.1",
   "Entries": [
     {
-      "Repeat": 9,
+      "Repeat": 8,
       "Subject": {
         "CommonName": "Filler certificates"
       },

@@ -31,18 +31,18 @@ _CET_ENDBR
 
 	negq	%r9
 	movq	%rsp,%r11
-	leaq	-16(%rsp,%r9,8),%r10  // future alloca(8*(num+2))
-	negq	%r9  // restore %r9
-	andq	$-1024,%r10  // minimize TLB usage
+	leaq	-16(%rsp,%r9,8),%r10
+	negq	%r9
+	andq	$-1024,%r10
 
-// An OS-agnostic version of __chkstk.
-// 
-// Some OSes (Windows) insist on stack being "wired" to
-// physical memory in strictly sequential manner, i.e. if stack
-// allocation spans two pages, then reference to farmost one can
-// be punishable by SEGV. But page walking can do good even on
-// other OSes, because it guarantees that villain thread hits
-// the guard page before it can make damage to innocent one...
+
+
+
+
+
+
+
+
 	subq	%r10,%r11
 	andq	$-4096,%r11
 	leaq	(%r10,%r11,1),%rsp
@@ -59,32 +59,32 @@ _CET_ENDBR
 	ja	.Lmul_page_walk
 .Lmul_page_walk_done:
 
-	movq	%rax,8(%rsp,%r9,8)  // tp[num+1]=%rsp
+	movq	%rax,8(%rsp,%r9,8)
 .cfi_escape	0x0f,0x0a,0x77,0x08,0x79,0x00,0x38,0x1e,0x22,0x06,0x23,0x08
 .Lmul_body:
-	movq	%rdx,%r12  // reassign %rdx
-	movq	(%r8),%r8  // pull n0[0] value
-	movq	(%r12),%rbx  // m0=bp[0]
+	movq	%rdx,%r12
+	movq	(%r8),%r8
+	movq	(%r12),%rbx
 	movq	(%rsi),%rax
 
-	xorq	%r14,%r14  // i=0
-	xorq	%r15,%r15  // j=0
+	xorq	%r14,%r14
+	xorq	%r15,%r15
 
 	movq	%r8,%rbp
-	mulq	%rbx  // ap[0]*bp[0]
+	mulq	%rbx
 	movq	%rax,%r10
 	movq	(%rcx),%rax
 
-	imulq	%r10,%rbp  // "tp[0]"*n0
+	imulq	%r10,%rbp
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[0]*m1
-	addq	%rax,%r10  // discarded
+	mulq	%rbp
+	addq	%rax,%r10
 	movq	8(%rsi),%rax
 	adcq	$0,%rdx
 	movq	%rdx,%r13
 
-	leaq	1(%r15),%r15  // j++
+	leaq	1(%r15),%r15
 	jmp	.L1st_enter
 
 .align	16
@@ -92,30 +92,30 @@ _CET_ENDBR
 	addq	%rax,%r13
 	movq	(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	%r11,%r13  // np[j]*m1+ap[j]*bp[0]
+	addq	%r11,%r13
 	movq	%r10,%r11
 	adcq	$0,%rdx
-	movq	%r13,-16(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-16(%rsp,%r15,8)
 	movq	%rdx,%r13
 
 .L1st_enter:
-	mulq	%rbx  // ap[j]*bp[0]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
-	leaq	1(%r15),%r15  // j++
+	leaq	1(%r15),%r15
 	movq	%rdx,%r10
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	cmpq	%r9,%r15
 	jne	.L1st
 
 	addq	%rax,%r13
-	movq	(%rsi),%rax  // ap[0]
+	movq	(%rsi),%rax
 	adcq	$0,%rdx
-	addq	%r11,%r13  // np[j]*m1+ap[j]*bp[0]
+	addq	%r11,%r13
 	adcq	$0,%rdx
-	movq	%r13,-16(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-16(%rsp,%r15,8)
 	movq	%rdx,%r13
 	movq	%r10,%r11
 
@@ -123,32 +123,32 @@ _CET_ENDBR
 	addq	%r11,%r13
 	adcq	$0,%rdx
 	movq	%r13,-8(%rsp,%r9,8)
-	movq	%rdx,(%rsp,%r9,8)  // store upmost overflow bit
+	movq	%rdx,(%rsp,%r9,8)
 
-	leaq	1(%r14),%r14  // i++
+	leaq	1(%r14),%r14
 	jmp	.Louter
 .align	16
 .Louter:
-	movq	(%r12,%r14,8),%rbx  // m0=bp[i]
-	xorq	%r15,%r15  // j=0
+	movq	(%r12,%r14,8),%rbx
+	xorq	%r15,%r15
 	movq	%r8,%rbp
 	movq	(%rsp),%r10
-	mulq	%rbx  // ap[0]*bp[i]
-	addq	%rax,%r10  // ap[0]*bp[i]+tp[0]
+	mulq	%rbx
+	addq	%rax,%r10
 	movq	(%rcx),%rax
 	adcq	$0,%rdx
 
-	imulq	%r10,%rbp  // tp[0]*n0
+	imulq	%r10,%rbp
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[0]*m1
-	addq	%rax,%r10  // discarded
+	mulq	%rbp
+	addq	%rax,%r10
 	movq	8(%rsi),%rax
 	adcq	$0,%rdx
-	movq	8(%rsp),%r10  // tp[1]
+	movq	8(%rsp),%r10
 	movq	%rdx,%r13
 
-	leaq	1(%r15),%r15  // j++
+	leaq	1(%r15),%r15
 	jmp	.Linner_enter
 
 .align	16
@@ -156,80 +156,80 @@ _CET_ENDBR
 	addq	%rax,%r13
 	movq	(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	%r10,%r13  // np[j]*m1+ap[j]*bp[i]+tp[j]
+	addq	%r10,%r13
 	movq	(%rsp,%r15,8),%r10
 	adcq	$0,%rdx
-	movq	%r13,-16(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-16(%rsp,%r15,8)
 	movq	%rdx,%r13
 
 .Linner_enter:
-	mulq	%rbx  // ap[j]*bp[i]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	%r11,%r10  // ap[j]*bp[i]+tp[j]
+	addq	%r11,%r10
 	movq	%rdx,%r11
 	adcq	$0,%r11
-	leaq	1(%r15),%r15  // j++
+	leaq	1(%r15),%r15
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	cmpq	%r9,%r15
 	jne	.Linner
 
 	addq	%rax,%r13
-	movq	(%rsi),%rax  // ap[0]
+	movq	(%rsi),%rax
 	adcq	$0,%rdx
-	addq	%r10,%r13  // np[j]*m1+ap[j]*bp[i]+tp[j]
+	addq	%r10,%r13
 	movq	(%rsp,%r15,8),%r10
 	adcq	$0,%rdx
-	movq	%r13,-16(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-16(%rsp,%r15,8)
 	movq	%rdx,%r13
 
 	xorq	%rdx,%rdx
 	addq	%r11,%r13
 	adcq	$0,%rdx
-	addq	%r10,%r13  // pull upmost overflow bit
+	addq	%r10,%r13
 	adcq	$0,%rdx
 	movq	%r13,-8(%rsp,%r9,8)
-	movq	%rdx,(%rsp,%r9,8)  // store upmost overflow bit
+	movq	%rdx,(%rsp,%r9,8)
 
-	leaq	1(%r14),%r14  // i++
+	leaq	1(%r14),%r14
 	cmpq	%r9,%r14
 	jb	.Louter
 
-	xorq	%r14,%r14  // i=0 and clear CF
-	movq	(%rsp),%rax  // tp[0]
-	movq	%r9,%r15  // j=num
+	xorq	%r14,%r14
+	movq	(%rsp),%rax
+	movq	%r9,%r15
 
 .align	16
 .Lsub:	sbbq	(%rcx,%r14,8),%rax
-	movq	%rax,(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
-	movq	8(%rsp,%r14,8),%rax  // tp[i+1]
-	leaq	1(%r14),%r14  // i++
-	decq	%r15  // doesn't affect CF
+	movq	%rax,(%rdi,%r14,8)
+	movq	8(%rsp,%r14,8),%rax
+	leaq	1(%r14),%r14
+	decq	%r15
 	jnz	.Lsub
 
-	sbbq	$0,%rax  // handle upmost overflow bit
+	sbbq	$0,%rax
 	movq	$-1,%rbx
-	xorq	%rax,%rbx  // not %rax
+	xorq	%rax,%rbx
 	xorq	%r14,%r14
-	movq	%r9,%r15  // j=num
+	movq	%r9,%r15
 
-.Lcopy:  // conditional copy
+.Lcopy:
 	movq	(%rdi,%r14,8),%rcx
 	movq	(%rsp,%r14,8),%rdx
 	andq	%rbx,%rcx
 	andq	%rax,%rdx
-	movq	%r9,(%rsp,%r14,8)  // zap temporary vector
+	movq	%r9,(%rsp,%r14,8)
 	orq	%rcx,%rdx
-	movq	%rdx,(%rdi,%r14,8)  // rp[i]=tp[i]
+	movq	%rdx,(%rdi,%r14,8)
 	leaq	1(%r14),%r14
 	subq	$1,%r15
 	jnz	.Lcopy
 
-	movq	8(%rsp,%r9,8),%rsi  // restore %rsp
+	movq	8(%rsp,%r9,8),%rsi
 .cfi_def_cfa	%rsi,8
-// No return value
+
 	movq	-48(%rsi),%r15
 .cfi_restore	%r15
 	movq	-40(%rsi),%r14
@@ -273,9 +273,9 @@ _CET_ENDBR
 
 	negq	%r9
 	movq	%rsp,%r11
-	leaq	-32(%rsp,%r9,8),%r10  // future alloca(8*(num+4))
-	negq	%r9  // restore
-	andq	$-1024,%r10  // minimize TLB usage
+	leaq	-32(%rsp,%r9,8),%r10
+	negq	%r9
+	andq	$-1024,%r10
 
 	subq	%r10,%r11
 	andq	$-4096,%r11
@@ -292,28 +292,28 @@ _CET_ENDBR
 	ja	.Lmul4x_page_walk
 .Lmul4x_page_walk_done:
 
-	movq	%rax,8(%rsp,%r9,8)  // tp[num+1]=%rsp
+	movq	%rax,8(%rsp,%r9,8)
 .cfi_escape	0x0f,0x0a,0x77,0x08,0x79,0x00,0x38,0x1e,0x22,0x06,0x23,0x08
 .Lmul4x_body:
-	movq	%rdi,16(%rsp,%r9,8)  // tp[num+2]=%rdi
-	movq	%rdx,%r12  // reassign %r12
-	movq	(%r8),%r8  // pull n0[0] value
-	movq	(%r12),%rbx  // m0=bp[0]
+	movq	%rdi,16(%rsp,%r9,8)
+	movq	%rdx,%r12
+	movq	(%r8),%r8
+	movq	(%r12),%rbx
 	movq	(%rsi),%rax
 
-	xorq	%r14,%r14  // i=0
-	xorq	%r15,%r15  // j=0
+	xorq	%r14,%r14
+	xorq	%r15,%r15
 
 	movq	%r8,%rbp
-	mulq	%rbx  // ap[0]*bp[0]
+	mulq	%rbx
 	movq	%rax,%r10
 	movq	(%rcx),%rax
 
-	imulq	%r10,%rbp  // "tp[0]"*n0
+	imulq	%r10,%rbp
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[0]*m1
-	addq	%rax,%r10  // discarded
+	mulq	%rbp
+	addq	%rax,%r10
 	movq	8(%rsi),%rax
 	adcq	$0,%rdx
 	movq	%rdx,%rdi
@@ -329,171 +329,171 @@ _CET_ENDBR
 	movq	16(%rsi),%rax
 	adcq	$0,%rdx
 	addq	%r11,%rdi
-	leaq	4(%r15),%r15  // j++
+	leaq	4(%r15),%r15
 	adcq	$0,%rdx
 	movq	%rdi,(%rsp)
 	movq	%rdx,%r13
 	jmp	.L1st4x
 .align	16
 .L1st4x:
-	mulq	%rbx  // ap[j]*bp[0]
+	mulq	%rbx
 	addq	%rax,%r10
 	movq	-16(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%r13
 	movq	-8(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	%r10,%r13  // np[j]*m1+ap[j]*bp[0]
+	addq	%r10,%r13
 	adcq	$0,%rdx
-	movq	%r13,-24(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-24(%rsp,%r15,8)
 	movq	%rdx,%rdi
 
-	mulq	%rbx  // ap[j]*bp[0]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	-8(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
 	movq	%rdx,%r10
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%rdi
 	movq	(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	%r11,%rdi  // np[j]*m1+ap[j]*bp[0]
+	addq	%r11,%rdi
 	adcq	$0,%rdx
-	movq	%rdi,-16(%rsp,%r15,8)  // tp[j-1]
+	movq	%rdi,-16(%rsp,%r15,8)
 	movq	%rdx,%r13
 
-	mulq	%rbx  // ap[j]*bp[0]
+	mulq	%rbx
 	addq	%rax,%r10
 	movq	(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%r13
 	movq	8(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	%r10,%r13  // np[j]*m1+ap[j]*bp[0]
+	addq	%r10,%r13
 	adcq	$0,%rdx
-	movq	%r13,-8(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-8(%rsp,%r15,8)
 	movq	%rdx,%rdi
 
-	mulq	%rbx  // ap[j]*bp[0]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	8(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
-	leaq	4(%r15),%r15  // j++
+	leaq	4(%r15),%r15
 	movq	%rdx,%r10
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%rdi
 	movq	-16(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	%r11,%rdi  // np[j]*m1+ap[j]*bp[0]
+	addq	%r11,%rdi
 	adcq	$0,%rdx
-	movq	%rdi,-32(%rsp,%r15,8)  // tp[j-1]
+	movq	%rdi,-32(%rsp,%r15,8)
 	movq	%rdx,%r13
 	cmpq	%r9,%r15
 	jb	.L1st4x
 
-	mulq	%rbx  // ap[j]*bp[0]
+	mulq	%rbx
 	addq	%rax,%r10
 	movq	-16(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%r13
 	movq	-8(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	%r10,%r13  // np[j]*m1+ap[j]*bp[0]
+	addq	%r10,%r13
 	adcq	$0,%rdx
-	movq	%r13,-24(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-24(%rsp,%r15,8)
 	movq	%rdx,%rdi
 
-	mulq	%rbx  // ap[j]*bp[0]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	-8(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
 	movq	%rdx,%r10
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%rdi
-	movq	(%rsi),%rax  // ap[0]
+	movq	(%rsi),%rax
 	adcq	$0,%rdx
-	addq	%r11,%rdi  // np[j]*m1+ap[j]*bp[0]
+	addq	%r11,%rdi
 	adcq	$0,%rdx
-	movq	%rdi,-16(%rsp,%r15,8)  // tp[j-1]
+	movq	%rdi,-16(%rsp,%r15,8)
 	movq	%rdx,%r13
 
 	xorq	%rdi,%rdi
 	addq	%r10,%r13
 	adcq	$0,%rdi
 	movq	%r13,-8(%rsp,%r15,8)
-	movq	%rdi,(%rsp,%r15,8)  // store upmost overflow bit
+	movq	%rdi,(%rsp,%r15,8)
 
-	leaq	1(%r14),%r14  // i++
+	leaq	1(%r14),%r14
 .align	4
 .Louter4x:
-	movq	(%r12,%r14,8),%rbx  // m0=bp[i]
-	xorq	%r15,%r15  // j=0
+	movq	(%r12,%r14,8),%rbx
+	xorq	%r15,%r15
 	movq	(%rsp),%r10
 	movq	%r8,%rbp
-	mulq	%rbx  // ap[0]*bp[i]
-	addq	%rax,%r10  // ap[0]*bp[i]+tp[0]
+	mulq	%rbx
+	addq	%rax,%r10
 	movq	(%rcx),%rax
 	adcq	$0,%rdx
 
-	imulq	%r10,%rbp  // tp[0]*n0
+	imulq	%r10,%rbp
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[0]*m1
-	addq	%rax,%r10  // "%r13", discarded
+	mulq	%rbp
+	addq	%rax,%r10
 	movq	8(%rsi),%rax
 	adcq	$0,%rdx
 	movq	%rdx,%rdi
 
-	mulq	%rbx  // ap[j]*bp[i]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	8(%rcx),%rax
 	adcq	$0,%rdx
-	addq	8(%rsp),%r11  // +tp[1]
+	addq	8(%rsp),%r11
 	adcq	$0,%rdx
 	movq	%rdx,%r10
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%rdi
 	movq	16(%rsi),%rax
 	adcq	$0,%rdx
-	addq	%r11,%rdi  // np[j]*m1+ap[j]*bp[i]+tp[j]
-	leaq	4(%r15),%r15  // j+=2
+	addq	%r11,%rdi
+	leaq	4(%r15),%r15
 	adcq	$0,%rdx
-	movq	%rdi,(%rsp)  // tp[j-1]
+	movq	%rdi,(%rsp)
 	movq	%rdx,%r13
 	jmp	.Linner4x
 .align	16
 .Linner4x:
-	mulq	%rbx  // ap[j]*bp[i]
+	mulq	%rbx
 	addq	%rax,%r10
 	movq	-16(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	-16(%rsp,%r15,8),%r10  // ap[j]*bp[i]+tp[j]
+	addq	-16(%rsp,%r15,8),%r10
 	adcq	$0,%rdx
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%r13
 	movq	-8(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
 	addq	%r10,%r13
 	adcq	$0,%rdx
-	movq	%r13,-24(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-24(%rsp,%r15,8)
 	movq	%rdx,%rdi
 
-	mulq	%rbx  // ap[j]*bp[i]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	-8(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
@@ -501,148 +501,148 @@ _CET_ENDBR
 	adcq	$0,%rdx
 	movq	%rdx,%r10
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%rdi
 	movq	(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
 	addq	%r11,%rdi
 	adcq	$0,%rdx
-	movq	%rdi,-16(%rsp,%r15,8)  // tp[j-1]
+	movq	%rdi,-16(%rsp,%r15,8)
 	movq	%rdx,%r13
 
-	mulq	%rbx  // ap[j]*bp[i]
+	mulq	%rbx
 	addq	%rax,%r10
 	movq	(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	(%rsp,%r15,8),%r10  // ap[j]*bp[i]+tp[j]
+	addq	(%rsp,%r15,8),%r10
 	adcq	$0,%rdx
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%r13
 	movq	8(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
 	addq	%r10,%r13
 	adcq	$0,%rdx
-	movq	%r13,-8(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-8(%rsp,%r15,8)
 	movq	%rdx,%rdi
 
-	mulq	%rbx  // ap[j]*bp[i]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	8(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
 	addq	8(%rsp,%r15,8),%r11
 	adcq	$0,%rdx
-	leaq	4(%r15),%r15  // j++
+	leaq	4(%r15),%r15
 	movq	%rdx,%r10
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%rdi
 	movq	-16(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
 	addq	%r11,%rdi
 	adcq	$0,%rdx
-	movq	%rdi,-32(%rsp,%r15,8)  // tp[j-1]
+	movq	%rdi,-32(%rsp,%r15,8)
 	movq	%rdx,%r13
 	cmpq	%r9,%r15
 	jb	.Linner4x
 
-	mulq	%rbx  // ap[j]*bp[i]
+	mulq	%rbx
 	addq	%rax,%r10
 	movq	-16(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
-	addq	-16(%rsp,%r15,8),%r10  // ap[j]*bp[i]+tp[j]
+	addq	-16(%rsp,%r15,8),%r10
 	adcq	$0,%rdx
 	movq	%rdx,%r11
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%r13
 	movq	-8(%rsi,%r15,8),%rax
 	adcq	$0,%rdx
 	addq	%r10,%r13
 	adcq	$0,%rdx
-	movq	%r13,-24(%rsp,%r15,8)  // tp[j-1]
+	movq	%r13,-24(%rsp,%r15,8)
 	movq	%rdx,%rdi
 
-	mulq	%rbx  // ap[j]*bp[i]
+	mulq	%rbx
 	addq	%rax,%r11
 	movq	-8(%rcx,%r15,8),%rax
 	adcq	$0,%rdx
 	addq	-8(%rsp,%r15,8),%r11
 	adcq	$0,%rdx
-	leaq	1(%r14),%r14  // i++
+	leaq	1(%r14),%r14
 	movq	%rdx,%r10
 
-	mulq	%rbp  // np[j]*m1
+	mulq	%rbp
 	addq	%rax,%rdi
-	movq	(%rsi),%rax  // ap[0]
+	movq	(%rsi),%rax
 	adcq	$0,%rdx
 	addq	%r11,%rdi
 	adcq	$0,%rdx
-	movq	%rdi,-16(%rsp,%r15,8)  // tp[j-1]
+	movq	%rdi,-16(%rsp,%r15,8)
 	movq	%rdx,%r13
 
 	xorq	%rdi,%rdi
 	addq	%r10,%r13
 	adcq	$0,%rdi
-	addq	(%rsp,%r9,8),%r13  // pull upmost overflow bit
+	addq	(%rsp,%r9,8),%r13
 	adcq	$0,%rdi
 	movq	%r13,-8(%rsp,%r15,8)
-	movq	%rdi,(%rsp,%r15,8)  // store upmost overflow bit
+	movq	%rdi,(%rsp,%r15,8)
 
 	cmpq	%r9,%r14
 	jb	.Louter4x
-	movq	16(%rsp,%r9,8),%rdi  // restore %rdi
+	movq	16(%rsp,%r9,8),%rdi
 	leaq	-4(%r9),%r15
-	movq	0(%rsp),%rax  // tp[0]
-	movq	8(%rsp),%rdx  // tp[1]
-	shrq	$2,%r15  // j=num/4-1
-	leaq	(%rsp),%rsi  // borrow ap for tp
-	xorq	%r14,%r14  // i=0 and clear CF
+	movq	0(%rsp),%rax
+	movq	8(%rsp),%rdx
+	shrq	$2,%r15
+	leaq	(%rsp),%rsi
+	xorq	%r14,%r14
 
 	subq	0(%rcx),%rax
-	movq	16(%rsi),%rbx  // tp[2]
-	movq	24(%rsi),%rbp  // tp[3]
+	movq	16(%rsi),%rbx
+	movq	24(%rsi),%rbp
 	sbbq	8(%rcx),%rdx
 
 .Lsub4x:
-	movq	%rax,0(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
-	movq	%rdx,8(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
+	movq	%rax,0(%rdi,%r14,8)
+	movq	%rdx,8(%rdi,%r14,8)
 	sbbq	16(%rcx,%r14,8),%rbx
-	movq	32(%rsi,%r14,8),%rax  // tp[i+1]
+	movq	32(%rsi,%r14,8),%rax
 	movq	40(%rsi,%r14,8),%rdx
 	sbbq	24(%rcx,%r14,8),%rbp
-	movq	%rbx,16(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
-	movq	%rbp,24(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
+	movq	%rbx,16(%rdi,%r14,8)
+	movq	%rbp,24(%rdi,%r14,8)
 	sbbq	32(%rcx,%r14,8),%rax
 	movq	48(%rsi,%r14,8),%rbx
 	movq	56(%rsi,%r14,8),%rbp
 	sbbq	40(%rcx,%r14,8),%rdx
-	leaq	4(%r14),%r14  // i++
-	decq	%r15  // doesn't affect CF
+	leaq	4(%r14),%r14
+	decq	%r15
 	jnz	.Lsub4x
 
-	movq	%rax,0(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
-	movq	32(%rsi,%r14,8),%rax  // load overflow bit
+	movq	%rax,0(%rdi,%r14,8)
+	movq	32(%rsi,%r14,8),%rax
 	sbbq	16(%rcx,%r14,8),%rbx
-	movq	%rdx,8(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
+	movq	%rdx,8(%rdi,%r14,8)
 	sbbq	24(%rcx,%r14,8),%rbp
-	movq	%rbx,16(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
+	movq	%rbx,16(%rdi,%r14,8)
 
-	sbbq	$0,%rax  // handle upmost overflow bit
-	movq	%rbp,24(%rdi,%r14,8)  // rp[i]=tp[i]-np[i]
+	sbbq	$0,%rax
+	movq	%rbp,24(%rdi,%r14,8)
 	pxor	%xmm0,%xmm0
 	movq	%rax,%xmm4
 	pcmpeqd	%xmm5,%xmm5
 	pshufd	$0,%xmm4,%xmm4
 	movq	%r9,%r15
 	pxor	%xmm4,%xmm5
-	shrq	$2,%r15  // j=num/4
-	xorl	%eax,%eax  // i=0
+	shrq	$2,%r15
+	xorl	%eax,%eax
 
 	jmp	.Lcopy4x
 .align	16
-.Lcopy4x:  // conditional copy
+.Lcopy4x:
 	movdqa	(%rsp,%rax,1),%xmm1
 	movdqu	(%rdi,%rax,1),%xmm2
 	pand	%xmm4,%xmm1
@@ -660,9 +660,9 @@ _CET_ENDBR
 	leaq	32(%rax),%rax
 	decq	%r15
 	jnz	.Lcopy4x
-	movq	8(%rsp,%r9,8),%rsi  // restore %rsp
+	movq	8(%rsp,%r9,8),%rsi
 .cfi_def_cfa	%rsi, 8
-// No return value
+
 	movq	-48(%rsi),%r15
 .cfi_restore	%r15
 	movq	-40(%rsi),%r14
@@ -682,9 +682,9 @@ _CET_ENDBR
 .cfi_endproc	
 .size	bn_mul4x_mont,.-bn_mul4x_mont
 .extern	bn_sqrx8x_internal
-.hidden bn_sqrx8x_internal  // see x86_64-mont5 module
+.hidden bn_sqrx8x_internal
 .extern	bn_sqr8x_internal
-.hidden bn_sqr8x_internal  // see x86_64-mont5 module
+.hidden bn_sqr8x_internal
 
 .globl	bn_sqr8x_mont
 .hidden bn_sqr8x_mont
@@ -711,30 +711,30 @@ _CET_ENDBR
 .Lsqr8x_prologue:
 
 	movl	%r9d,%r10d
-	shll	$3,%r9d  // convert %r9 to bytes
-	shlq	$3+2,%r10  // 4*%r9
+	shll	$3,%r9d
+	shlq	$3+2,%r10
 	negq	%r9
 
-// #############################################################
-// ensure that stack frame doesn't alias with %rsi modulo
-// 4096. this is done to allow memory disambiguation logic
-// do its job.
-// 
+
+
+
+
+
 	leaq	-64(%rsp,%r9,2),%r11
 	movq	%rsp,%rbp
-	movq	(%r8),%r8  // *n0
+	movq	(%r8),%r8
 	subq	%rsi,%r11
 	andq	$4095,%r11
 	cmpq	%r11,%r10
 	jb	.Lsqr8x_sp_alt
-	subq	%r11,%rbp  // align with %rsi
-	leaq	-64(%rbp,%r9,2),%rbp  // future alloca(frame+2*%r9)
+	subq	%r11,%rbp
+	leaq	-64(%rbp,%r9,2),%rbp
 	jmp	.Lsqr8x_sp_done
 
 .align	32
 .Lsqr8x_sp_alt:
-	leaq	4096-64(,%r9,2),%r10  // 4096-frame-2*%r9
-	leaq	-64(%rbp,%r9,2),%rbp  // future alloca(frame+2*%r9)
+	leaq	4096-64(,%r9,2),%r10
+	leaq	-64(%rbp,%r9,2),%rbp
 	subq	%r10,%r11
 	movq	$0,%r10
 	cmovcq	%r10,%r11
@@ -762,41 +762,41 @@ _CET_ENDBR
 	negq	%r9
 
 	movq	%r8,32(%rsp)
-	movq	%rax,40(%rsp)  // save original %rsp
+	movq	%rax,40(%rsp)
 .cfi_escape	0x0f,0x05,0x77,0x28,0x06,0x23,0x08
 .Lsqr8x_body:
 
-	movq	%rcx,%xmm2  // save pointer to modulus
+	movq	%rcx,%xmm2
 	pxor	%xmm0,%xmm0
-	movq	%rdi,%xmm1  // save %rdi
-	movq	%r10,%xmm3  // -%r9
+	movq	%rdi,%xmm1
+	movq	%r10,%xmm3
 	testq	%rdx,%rdx
 	jz	.Lsqr8x_nox
 
-	call	bn_sqrx8x_internal  // see x86_64-mont5 module
-// %rax	top-most carry
-// %rbp	nptr
-// %rcx	-8*num
-// %r8	end of tp[2*num]
+	call	bn_sqrx8x_internal
+
+
+
+
 	leaq	(%r8,%rcx,1),%rbx
 	movq	%rcx,%r9
 	movq	%rcx,%rdx
 	movq	%xmm1,%rdi
-	sarq	$3+2,%rcx  // %cf=0
+	sarq	$3+2,%rcx
 	jmp	.Lsqr8x_sub
 
 .align	32
 .Lsqr8x_nox:
-	call	bn_sqr8x_internal  // see x86_64-mont5 module
-// %rax	top-most carry
-// %rbp	nptr
-// %r8	-8*num
-// %rdi	end of tp[2*num]
+	call	bn_sqr8x_internal
+
+
+
+
 	leaq	(%rdi,%r9,1),%rbx
 	movq	%r9,%rcx
 	movq	%r9,%rdx
 	movq	%xmm1,%rdi
-	sarq	$3+2,%rcx  // %cf=0
+	sarq	$3+2,%rcx
 	jmp	.Lsqr8x_sub
 
 .align	32
@@ -816,17 +816,17 @@ _CET_ENDBR
 	movq	%r14,16(%rdi)
 	movq	%r15,24(%rdi)
 	leaq	32(%rdi),%rdi
-	incq	%rcx  // preserves %cf
+	incq	%rcx
 	jnz	.Lsqr8x_sub
 
-	sbbq	$0,%rax  // top-most carry
-	leaq	(%rbx,%r9,1),%rbx  // rewind
-	leaq	(%rdi,%r9,1),%rdi  // rewind
+	sbbq	$0,%rax
+	leaq	(%rbx,%r9,1),%rbx
+	leaq	(%rdi,%r9,1),%rdi
 
 	movq	%rax,%xmm1
 	pxor	%xmm0,%xmm0
 	pshufd	$0,%xmm1,%xmm1
-	movq	40(%rsp),%rsi  // restore %rsp
+	movq	40(%rsp),%rsi
 .cfi_def_cfa	%rsi,8
 	jmp	.Lsqr8x_cond_copy
 
@@ -838,7 +838,7 @@ _CET_ENDBR
 	movdqu	0(%rdi),%xmm4
 	movdqu	16(%rdi),%xmm5
 	leaq	32(%rdi),%rdi
-	movdqa	%xmm0,-32(%rbx)  // zero tp
+	movdqa	%xmm0,-32(%rbx)
 	movdqa	%xmm0,-16(%rbx)
 	movdqa	%xmm0,-32(%rbx,%rdx,1)
 	movdqa	%xmm0,-16(%rbx,%rdx,1)
@@ -855,7 +855,7 @@ _CET_ENDBR
 	addq	$32,%r9
 	jnz	.Lsqr8x_cond_copy
 
-// No return value
+
 	movq	-48(%rsi),%r15
 .cfi_restore	%r15
 	movq	-40(%rsi),%r14
@@ -897,11 +897,11 @@ _CET_ENDBR
 .cfi_offset	%r15,-56
 .Lmulx4x_prologue:
 
-	shll	$3,%r9d  // convert %r9 to bytes
+	shll	$3,%r9d
 	xorq	%r10,%r10
-	subq	%r9,%r10  // -%r9
-	movq	(%r8),%r8  // *n0
-	leaq	-72(%rsp,%r10,1),%rbp  // future alloca(frame+%r9+8)
+	subq	%r9,%r10
+	movq	(%r8),%r8
+	leaq	-72(%rsp,%r10,1),%rbp
 	andq	$-128,%rbp
 	movq	%rsp,%r11
 	subq	%rbp,%r11
@@ -921,62 +921,62 @@ _CET_ENDBR
 .Lmulx4x_page_walk_done:
 
 	leaq	(%rdx,%r9,1),%r10
-// #############################################################
-// Stack layout
-// +0	num
-// +8	off-loaded &b[i]
-// +16	end of b[num]
-// +24	saved n0
-// +32	saved rp
-// +40	saved %rsp
-// +48	inner counter
-// +56
-// +64	tmp[num+1]
-// 
-	movq	%r9,0(%rsp)  // save %r9
+
+
+
+
+
+
+
+
+
+
+
+
+	movq	%r9,0(%rsp)
 	shrq	$5,%r9
-	movq	%r10,16(%rsp)  // end of b[num]
+	movq	%r10,16(%rsp)
 	subq	$1,%r9
-	movq	%r8,24(%rsp)  // save *n0
-	movq	%rdi,32(%rsp)  // save %rdi
-	movq	%rax,40(%rsp)  // save original %rsp
+	movq	%r8,24(%rsp)
+	movq	%rdi,32(%rsp)
+	movq	%rax,40(%rsp)
 .cfi_escape	0x0f,0x05,0x77,0x28,0x06,0x23,0x08
-	movq	%r9,48(%rsp)  // inner counter
+	movq	%r9,48(%rsp)
 	jmp	.Lmulx4x_body
 
 .align	32
 .Lmulx4x_body:
 	leaq	8(%rdx),%rdi
-	movq	(%rdx),%rdx  // b[0], %rdx==%rdx actually
+	movq	(%rdx),%rdx
 	leaq	64+32(%rsp),%rbx
 	movq	%rdx,%r9
 
-	mulxq	0(%rsi),%r8,%rax  // a[0]*b[0]
-	mulxq	8(%rsi),%r11,%r14  // a[1]*b[0]
+	mulxq	0(%rsi),%r8,%rax
+	mulxq	8(%rsi),%r11,%r14
 	addq	%rax,%r11
-	movq	%rdi,8(%rsp)  // off-load &b[i]
-	mulxq	16(%rsi),%r12,%r13  // ...
+	movq	%rdi,8(%rsp)
+	mulxq	16(%rsi),%r12,%r13
 	adcq	%r14,%r12
 	adcq	$0,%r13
 
-	movq	%r8,%rdi  // borrow %rdi
-	imulq	24(%rsp),%r8  // "t[0]"*n0
-	xorq	%rbp,%rbp  // cf=0, of=0
+	movq	%r8,%rdi
+	imulq	24(%rsp),%r8
+	xorq	%rbp,%rbp
 
 	mulxq	24(%rsi),%rax,%r14
 	movq	%r8,%rdx
 	leaq	32(%rsi),%rsi
 	adcxq	%rax,%r13
-	adcxq	%rbp,%r14  // cf=0
+	adcxq	%rbp,%r14
 
 	mulxq	0(%rcx),%rax,%r10
-	adcxq	%rax,%rdi  // discarded
+	adcxq	%rax,%rdi
 	adoxq	%r11,%r10
 	mulxq	8(%rcx),%rax,%r11
 	adcxq	%rax,%r10
 	adoxq	%r12,%r11
-.byte	0xc4,0x62,0xfb,0xf6,0xa1,0x10,0x00,0x00,0x00  // mulx	2*8(%rcx),%rax,%r12
-	movq	48(%rsp),%rdi  // counter value
+.byte	0xc4,0x62,0xfb,0xf6,0xa1,0x10,0x00,0x00,0x00
+	movq	48(%rsp),%rdi
 	movq	%r10,-32(%rbx)
 	adcxq	%rax,%r11
 	adoxq	%r13,%r12
@@ -984,7 +984,7 @@ _CET_ENDBR
 	movq	%r9,%rdx
 	movq	%r11,-24(%rbx)
 	adcxq	%rax,%r12
-	adoxq	%rbp,%r15  // of=0
+	adoxq	%rbp,%r15
 	leaq	32(%rcx),%rcx
 	movq	%r12,-16(%rbx)
 
@@ -992,18 +992,18 @@ _CET_ENDBR
 
 .align	32
 .Lmulx4x_1st:
-	adcxq	%rbp,%r15  // cf=0, modulo-scheduled
-	mulxq	0(%rsi),%r10,%rax  // a[4]*b[0]
+	adcxq	%rbp,%r15
+	mulxq	0(%rsi),%r10,%rax
 	adcxq	%r14,%r10
-	mulxq	8(%rsi),%r11,%r14  // a[5]*b[0]
+	mulxq	8(%rsi),%r11,%r14
 	adcxq	%rax,%r11
-	mulxq	16(%rsi),%r12,%rax  // ...
+	mulxq	16(%rsi),%r12,%rax
 	adcxq	%r14,%r12
 	mulxq	24(%rsi),%r13,%r14
 .byte	0x67,0x67
 	movq	%r8,%rdx
 	adcxq	%rax,%r13
-	adcxq	%rbp,%r14  // cf=0
+	adcxq	%rbp,%r14
 	leaq	32(%rsi),%rsi
 	leaq	32(%rbx),%rbx
 
@@ -1027,43 +1027,43 @@ _CET_ENDBR
 	leaq	32(%rcx),%rcx
 	movq	%r13,-16(%rbx)
 
-	decq	%rdi  // of=0, pass cf
+	decq	%rdi
 	jnz	.Lmulx4x_1st
 
-	movq	0(%rsp),%rax  // load num
-	movq	8(%rsp),%rdi  // re-load &b[i]
-	adcq	%rbp,%r15  // modulo-scheduled
+	movq	0(%rsp),%rax
+	movq	8(%rsp),%rdi
+	adcq	%rbp,%r15
 	addq	%r15,%r14
-	sbbq	%r15,%r15  // top-most carry
+	sbbq	%r15,%r15
 	movq	%r14,-8(%rbx)
 	jmp	.Lmulx4x_outer
 
 .align	32
 .Lmulx4x_outer:
-	movq	(%rdi),%rdx  // b[i]
-	leaq	8(%rdi),%rdi  // b++
-	subq	%rax,%rsi  // rewind %rsi
-	movq	%r15,(%rbx)  // save top-most carry
+	movq	(%rdi),%rdx
+	leaq	8(%rdi),%rdi
+	subq	%rax,%rsi
+	movq	%r15,(%rbx)
 	leaq	64+32(%rsp),%rbx
-	subq	%rax,%rcx  // rewind %rcx
+	subq	%rax,%rcx
 
-	mulxq	0(%rsi),%r8,%r11  // a[0]*b[i]
-	xorl	%ebp,%ebp  // xor	%rbp,%rbp	# cf=0, of=0
+	mulxq	0(%rsi),%r8,%r11
+	xorl	%ebp,%ebp
 	movq	%rdx,%r9
-	mulxq	8(%rsi),%r14,%r12  // a[1]*b[i]
+	mulxq	8(%rsi),%r14,%r12
 	adoxq	-32(%rbx),%r8
 	adcxq	%r14,%r11
-	mulxq	16(%rsi),%r15,%r13  // ...
+	mulxq	16(%rsi),%r15,%r13
 	adoxq	-24(%rbx),%r11
 	adcxq	%r15,%r12
 	adoxq	-16(%rbx),%r12
 	adcxq	%rbp,%r13
 	adoxq	%rbp,%r13
 
-	movq	%rdi,8(%rsp)  // off-load &b[i]
+	movq	%rdi,8(%rsp)
 	movq	%r8,%r15
-	imulq	24(%rsp),%r8  // "t[0]"*n0
-	xorl	%ebp,%ebp  // xor	%rbp,%rbp	# cf=0, of=0
+	imulq	24(%rsp),%r8
+	xorl	%ebp,%ebp
 
 	mulxq	24(%rsi),%rax,%r14
 	movq	%r8,%rdx
@@ -1074,7 +1074,7 @@ _CET_ENDBR
 	adoxq	%rbp,%r14
 
 	mulxq	0(%rcx),%rax,%r10
-	adcxq	%rax,%r15  // discarded
+	adcxq	%rax,%r15
 	adoxq	%r11,%r10
 	mulxq	8(%rcx),%rax,%r11
 	adcxq	%rax,%r10
@@ -1088,21 +1088,21 @@ _CET_ENDBR
 	movq	%r11,-24(%rbx)
 	leaq	32(%rcx),%rcx
 	adcxq	%rax,%r12
-	adoxq	%rbp,%r15  // of=0
-	movq	48(%rsp),%rdi  // counter value
+	adoxq	%rbp,%r15
+	movq	48(%rsp),%rdi
 	movq	%r12,-16(%rbx)
 
 	jmp	.Lmulx4x_inner
 
 .align	32
 .Lmulx4x_inner:
-	mulxq	0(%rsi),%r10,%rax  // a[4]*b[i]
-	adcxq	%rbp,%r15  // cf=0, modulo-scheduled
+	mulxq	0(%rsi),%r10,%rax
+	adcxq	%rbp,%r15
 	adoxq	%r14,%r10
-	mulxq	8(%rsi),%r11,%r14  // a[5]*b[i]
+	mulxq	8(%rsi),%r11,%r14
 	adcxq	0(%rbx),%r10
 	adoxq	%rax,%r11
-	mulxq	16(%rsi),%r12,%rax  // ...
+	mulxq	16(%rsi),%r12,%rax
 	adcxq	8(%rbx),%r11
 	adoxq	%r14,%r12
 	mulxq	24(%rsi),%r13,%r14
@@ -1110,10 +1110,10 @@ _CET_ENDBR
 	adcxq	16(%rbx),%r12
 	adoxq	%rax,%r13
 	adcxq	24(%rbx),%r13
-	adoxq	%rbp,%r14  // of=0
+	adoxq	%rbp,%r14
 	leaq	32(%rsi),%rsi
 	leaq	32(%rbx),%rbx
-	adcxq	%rbp,%r14  // cf=0
+	adcxq	%rbp,%r14
 
 	adoxq	%r15,%r10
 	mulxq	0(%rcx),%rax,%r15
@@ -1135,26 +1135,26 @@ _CET_ENDBR
 	leaq	32(%rcx),%rcx
 	movq	%r13,-16(%rbx)
 
-	decq	%rdi  // of=0, pass cf
+	decq	%rdi
 	jnz	.Lmulx4x_inner
 
-	movq	0(%rsp),%rax  // load num
-	movq	8(%rsp),%rdi  // re-load &b[i]
-	adcq	%rbp,%r15  // modulo-scheduled
-	subq	0(%rbx),%rbp  // pull top-most carry
+	movq	0(%rsp),%rax
+	movq	8(%rsp),%rdi
+	adcq	%rbp,%r15
+	subq	0(%rbx),%rbp
 	adcq	%r15,%r14
-	sbbq	%r15,%r15  // top-most carry
+	sbbq	%r15,%r15
 	movq	%r14,-8(%rbx)
 
 	cmpq	16(%rsp),%rdi
 	jne	.Lmulx4x_outer
 
 	leaq	64(%rsp),%rbx
-	subq	%rax,%rcx  // rewind %rcx
+	subq	%rax,%rcx
 	negq	%r15
 	movq	%rax,%rdx
-	shrq	$3+2,%rax  // %cf=0
-	movq	32(%rsp),%rdi  // restore rp
+	shrq	$3+2,%rax
+	movq	32(%rsp),%rdi
 	jmp	.Lmulx4x_sub
 
 .align	32
@@ -1174,17 +1174,17 @@ _CET_ENDBR
 	movq	%r13,16(%rdi)
 	movq	%r14,24(%rdi)
 	leaq	32(%rdi),%rdi
-	decq	%rax  // preserves %cf
+	decq	%rax
 	jnz	.Lmulx4x_sub
 
-	sbbq	$0,%r15  // top-most carry
+	sbbq	$0,%r15
 	leaq	64(%rsp),%rbx
-	subq	%rdx,%rdi  // rewind
+	subq	%rdx,%rdi
 
 	movq	%r15,%xmm1
 	pxor	%xmm0,%xmm0
 	pshufd	$0,%xmm1,%xmm1
-	movq	40(%rsp),%rsi  // restore %rsp
+	movq	40(%rsp),%rsi
 .cfi_def_cfa	%rsi,8
 	jmp	.Lmulx4x_cond_copy
 
@@ -1196,7 +1196,7 @@ _CET_ENDBR
 	movdqu	0(%rdi),%xmm4
 	movdqu	16(%rdi),%xmm5
 	leaq	32(%rdi),%rdi
-	movdqa	%xmm0,-32(%rbx)  // zero tp
+	movdqa	%xmm0,-32(%rbx)
 	movdqa	%xmm0,-16(%rbx)
 	pcmpeqd	%xmm1,%xmm0
 	pand	%xmm1,%xmm2
@@ -1213,7 +1213,7 @@ _CET_ENDBR
 
 	movq	%rdx,(%rbx)
 
-// No return value
+
 	movq	-48(%rsi),%r15
 .cfi_restore	%r15
 	movq	-40(%rsi),%r14

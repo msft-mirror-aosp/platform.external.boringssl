@@ -22,12 +22,10 @@
 #include <openssl/ec.h>
 #include <openssl/ec_key.h>
 #include <openssl/ecdsa.h>
-#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 
 #include "../test/file_test.h"
-#include "../test/test_util.h"
 #include "../test/wycheproof_util.h"
 
 
@@ -65,9 +63,6 @@ static void RunWycheproofTest(const char *path) {
     int ret = ECDSA_verify_p1363(digest, digest_len, sig.data(), sig.size(),
                                  key.get());
     EXPECT_EQ(ret, result.IsValid() ? 1 : 0);
-    if (!result.IsValid()) {
-      ERR_clear_error();
-    }
   });
 }
 
