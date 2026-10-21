@@ -239,6 +239,7 @@ TEST(X509ExtensionTest, ParseCertificatePolicies) {
         const uint8_t *p = rewritten.data();
         EXPECT_FALSE(UniquePtr<CERTIFICATEPOLICIES>(
             d2i_CERTIFICATEPOLICIES(nullptr, &p, rewritten.size())));
+        EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, std::nullopt}}));
       });
 
   // Test additional invalid inputs.
@@ -262,6 +263,7 @@ TEST(X509ExtensionTest, ParseCertificatePolicies) {
     const uint8_t *p = in.data();
     EXPECT_FALSE(UniquePtr<CERTIFICATEPOLICIES>(
         d2i_CERTIFICATEPOLICIES(nullptr, &p, in.size())));
+    EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, std::nullopt}}));
   }
 }
 
@@ -381,6 +383,7 @@ TEST(X509ExtensionTest, ParseCRLDistributionPoints) {
     const uint8_t *p = rewritten.data();
     EXPECT_FALSE(UniquePtr<CRL_DIST_POINTS>(
         d2i_CRL_DIST_POINTS(nullptr, &p, rewritten.size())));
+    EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_ASN1, std::nullopt}}));
   });
 }
 

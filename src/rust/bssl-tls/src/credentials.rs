@@ -40,9 +40,10 @@ use core::{
     }, //
 };
 
+use bssl_crypto::FromFfiSlice;
 use bssl_x509::{
     errors::PemReason,
-    keys::PrivateKey, //
+    keys::{PrivateKey, PublicKey},
 };
 
 use crate::{
@@ -68,7 +69,6 @@ use crate::{
         CryptoBufferWrapper,
         Stack,
         StackIterator,
-        sanitize_slice,
         slice_into_ffi_raw_parts, //
     },
     has_duplicates, //
@@ -76,6 +76,7 @@ use crate::{
 
 pub mod early_callback;
 pub(crate) mod methods;
+pub mod select_cert;
 
 /// TLS credentials builder
 pub struct TlsCredentialBuilder<Mode>(NonNull<bssl_sys::SSL_CREDENTIAL>, PhantomData<fn() -> Mode>);
@@ -86,10 +87,10 @@ pub enum X509Mode {}
 /// Raw Public Key credential
 pub enum RawPublicKeyMode {}
 
-pub(crate) trait NeedsPrivateKey {}
+pub(crate) trait HasPrivateKey {}
 
-impl NeedsPrivateKey for X509Mode {}
-impl NeedsPrivateKey for RawPublicKeyMode {}
+impl HasPrivateKey for X509Mode {}
+impl HasPrivateKey for RawPublicKeyMode {}
 
 // Safety: At this type state, the credential handle is exclusively owned.
 unsafe impl<M> Send for TlsCredentialBuilder<M> {}
@@ -152,78 +153,20 @@ impl TlsCredentialBuilder<X509Mode> {
         );
         this.set_ex_data()
     }
-}
-
-impl TlsCredentialBuilder<RawPublicKeyMode> {
-    /// Construct raw public key credential instance.
-    ///
-    /// TLS connection may use this credential to perform authentication per [RFC 7250].
-    ///
-    /// [RFC 7250]: <https://tools.ietf.org/html/rfc7250>
-    pub fn new_raw_public_key(mut key: PrivateKey) -> Self {
-        let this = Self(
-            NonNull::new(unsafe {
-                // Safety:
-                // - the `PrivateKey` type already contains both public and private key parts.
-                // - the constructor call also claims the ownership of the key.
-                bssl_sys::SSL_CREDENTIAL_new_raw_public_key(key.as_mut_ptr())
-            })
-            .expect("allocation failure"),
-            PhantomData,
-        );
-        this.set_ex_data()
-    }
-}
-
-impl<M> TlsCredentialBuilder<M>
-where
-    M: NeedsPrivateKey,
-{
-    /// Set [`SignatureAlgorithm`] preferences.
-    ///
-    /// This controls which signature algorithms will be used with this credential.
-    pub fn with_signing_algorithm_preferences(
-        &mut self,
-        algs: &[SignatureAlgorithm],
-    ) -> Result<&mut Self, Error> {
-        let algs: &[u16] = unsafe {
-            // Safety: `SignatureAlgorithm` has a `repr(u16)`
-            core::mem::transmute(algs)
-        };
-        if has_duplicates(algs) {
-            return Err(Error::Configuration(
-                ConfigurationError::DuplicatedParameters,
-            ));
-        }
-        let (ptr, len) = slice_into_ffi_raw_parts(algs);
-        check_lib_error!(unsafe {
-            // Safety
-            bssl_sys::SSL_CREDENTIAL_set1_signing_algorithm_prefs(self.ptr(), ptr, len)
-        });
-        Ok(self)
-    }
 
     /// Set private key delegate.
     ///
     /// This will override the `TlsConnection` private key delegate.
     pub fn with_private_key_delegate<T: 'static + PrivateKeyDelegate>(
         &mut self,
-        key_method: Option<T>,
+        key_method: T,
     ) -> &mut Self {
         let cred = self.ptr();
-        if let Some(key_method) = key_method {
-            unsafe {
-                // Safety: we only install our own vtable.
-                bssl_sys::SSL_CREDENTIAL_set_private_key_method(cred, methods::PRIVATE_KEY_METHODS);
-            }
-            self.get_credential_methods().private_key_methods = Some(Box::new(key_method) as _);
-        } else {
-            unsafe {
-                // Safety: we only uninstall the vtable.
-                bssl_sys::SSL_CREDENTIAL_set_private_key_method(cred, core::ptr::null());
-            }
-            self.get_credential_methods().private_key_methods.take();
+        unsafe {
+            // Safety: we only install our own vtable.
+            bssl_sys::SSL_CREDENTIAL_set_private_key_method(cred, methods::PRIVATE_KEY_METHODS);
         }
+        self.get_credential_methods().private_key_methods = Some(Box::new(key_method) as _);
         self
     }
 
@@ -248,9 +191,6 @@ where
             Ok(self)
         }
     }
-}
-
-impl TlsCredentialBuilder<X509Mode> {
     /// Set certificate chain.
     ///
     /// The leaf, also known as end-entity, certificate **must come first** in `certs`.
@@ -306,6 +246,85 @@ impl TlsCredentialBuilder<X509Mode> {
     }
 }
 
+impl TlsCredentialBuilder<RawPublicKeyMode> {
+    /// Construct raw public key credential instance.
+    ///
+    /// TLS connection may use this credential to perform authentication per [RFC 7250].
+    ///
+    /// [RFC 7250]: <https://tools.ietf.org/html/rfc7250>
+    pub fn new_raw_public_key(mut key: PrivateKey) -> Self {
+        let this = Self(
+            NonNull::new(unsafe {
+                // Safety:
+                // - the `PrivateKey` type already contains both public and private key parts.
+                // - the constructor call also claims the ownership of the key.
+                bssl_sys::SSL_CREDENTIAL_new_raw_public_key(key.as_mut_ptr())
+            })
+            .expect("allocation failure"),
+            PhantomData,
+        );
+        this.set_ex_data()
+    }
+
+    /// Construct raw public key credential, with a private key delegate.
+    ///
+    /// This credential is suitable for cases where the private key is stored off the device or in a
+    /// credential store.
+    /// TLS connection may use this credential to perform authentication per [RFC 7250].
+    ///
+    /// [RFC 7250]: <https://tools.ietf.org/html/rfc7250>
+    pub fn new_raw_public_key_with_delegate<T: PrivateKeyDelegate + 'static>(
+        mut key: PublicKey,
+        delegate: T,
+    ) -> Self {
+        let mut this = Self(
+            NonNull::new(unsafe {
+                // Safety:
+                // - the `PublicKey` type contains the public key part.
+                // - the constructor bumps the ref-count on the public key.
+                bssl_sys::SSL_CREDENTIAL_new_raw_public_key_custom(
+                    key.as_mut_ptr(),
+                    methods::PRIVATE_KEY_METHODS,
+                )
+            })
+            .expect("allocation failure"),
+            PhantomData,
+        )
+        .set_ex_data();
+        this.get_credential_methods().private_key_methods = Some(Box::new(delegate) as _);
+        this
+    }
+}
+
+impl<M> TlsCredentialBuilder<M>
+where
+    M: HasPrivateKey,
+{
+    /// Set [`SignatureAlgorithm`] preferences.
+    ///
+    /// This controls which signature algorithms will be used with this credential.
+    pub fn with_signing_algorithm_preferences(
+        &mut self,
+        algs: &[SignatureAlgorithm],
+    ) -> Result<&mut Self, Error> {
+        let algs: &[u16] = unsafe {
+            // Safety: `SignatureAlgorithm` has a `repr(u16)`
+            core::mem::transmute(algs)
+        };
+        if has_duplicates(algs) {
+            return Err(Error::Configuration(
+                ConfigurationError::DuplicatedParameters,
+            ));
+        }
+        let (ptr, len) = slice_into_ffi_raw_parts(algs);
+        check_lib_error!(unsafe {
+            // Safety
+            bssl_sys::SSL_CREDENTIAL_set1_signing_algorithm_prefs(self.ptr(), ptr, len)
+        });
+        Ok(self)
+    }
+}
+
 impl<M> TlsCredentialBuilder<M> {
     /// Finalise the credential.
     pub fn build(mut self) -> Option<TlsCredential> {
@@ -328,6 +347,7 @@ impl<M> TlsCredentialBuilder<M> {
 ///
 /// [RFC 9258]: <https://datatracker.ietf.org/doc/html/rfc9258#section-5.1>
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[non_exhaustive]
 pub enum PskHash {
     /// SHA-256
     Sha256,
@@ -361,6 +381,14 @@ impl TlsCredential {
         self.0.as_ptr()
     }
 
+    pub(crate) fn from_raw_and_upref(cred: NonNull<bssl_sys::SSL_CREDENTIAL>) -> Self {
+        unsafe {
+            // Safety: we are only bumping the ref-count.
+            bssl_sys::SSL_CREDENTIAL_up_ref(cred.as_ptr());
+        }
+        Self(cred)
+    }
+
     /// Create a new pre-shared key credential for TLS 1.3.
     ///
     /// See [RFC 9258](https://datatracker.ietf.org/doc/html/rfc9258) for details.
@@ -392,6 +420,24 @@ impl TlsCredential {
         };
         let cred = NonNull::new(cred).ok_or_else(|| Error::extract_lib_err())?;
         Ok(TlsCredential(cred))
+    }
+
+    /// Return the external identity of this pre-shared key credential.
+    ///
+    /// Returns `None` if this credential is not a pre-shared key credential.
+    pub fn get_pre_shared_key_id(&self) -> Option<&[u8]> {
+        let mut id_len: usize = 0;
+        let id_ptr = unsafe {
+            // Safety: `self.0` is a valid `SSL_CREDENTIAL` handle.
+            bssl_sys::SSL_CREDENTIAL_get0_pre_shared_key_id(self.ptr(), &mut id_len)
+        };
+        if id_ptr.is_null() {
+            return None;
+        }
+        unsafe {
+            // Safety: `id_ptr` will be outlived by `self`.
+            Some(u8::from_ffi_ptr(id_ptr, id_len))
+        }
     }
 }
 
@@ -430,7 +476,7 @@ impl Certificate {
         cert: &[u8],
         cache: Option<&CertificateCache>,
     ) -> Result<Vec<Self>, Error> {
-        let mut bio = Bio::from_bytes(cert).unwrap();
+        let mut bio = Bio::from_bytes(cert);
         let mut res = vec![];
         loop {
             match Self::parse_one(&mut bio, cache) {
@@ -451,7 +497,7 @@ impl Certificate {
         cert: &[u8],
         cache: Option<&CertificateCache>,
     ) -> Result<Self, Error> {
-        let mut bio = Bio::from_bytes(cert)?;
+        let mut bio = Bio::from_bytes(cert);
         let (cert, _) = Self::parse_one(&mut bio, cache)?;
         Ok(cert)
     }
@@ -499,12 +545,10 @@ impl Certificate {
             if buf.to_bytes() != b"CERTIFICATE" {
                 continue;
             }
-            let Some(contents) = (unsafe {
+            let contents = unsafe {
                 // Safety: the slice is only used within the loop and we will copy the contents
                 // when constructing the certificate object.
-                sanitize_slice(data.0, len)
-            }) else {
-                return Err(Error::Io(IoError::TooLong));
+                u8::from_ffi_ptr(data.0, len)
             };
             let cert = Certificate::from_bytes(contents, cache)?;
             return Ok((cert, eof));
@@ -522,7 +566,7 @@ impl Certificate {
         };
         unsafe {
             // Safety: `data` will be outlived by `self`
-            sanitize_slice(data, len).expect("buffer is too large")
+            u8::from_ffi_ptr(data, len)
         }
     }
 }
@@ -595,7 +639,7 @@ pub struct DecryptionOperation<'a> {
 ///
 /// This protocol allows for asynchronous signing and decryption operations.
 /// BoringSSL will call one of [`Self::sign`] or [`Self::decrypt`] for operation initiation,
-/// and call [`Self::complete`] to poll for completion as long as
+/// and call [`PrivateKeyOperation::complete`] to poll for completion as long as
 /// [`PrivateKeyOperationResult::Pending`] is returned.
 pub trait PrivateKeyDelegate: Send + Sync {
     /// Sign operation.
@@ -702,6 +746,7 @@ bssl_macros::bssl_enum! {
     ///
     /// [IANA]: https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-16
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+    #[non_exhaustive]
     pub enum SignatureAlgorithm: u16 {
         /// IANA entry `rsa_pkcs1_sha256`
         RsaPkcs1Sha256 = bssl_sys::SSL_SIGN_RSA_PKCS1_SHA256 as u16,
@@ -762,7 +807,7 @@ impl VerifyCertificateContext {
             core::mem::transmute(call_slice_getter!(
                 bssl_sys::SSL_get0_ech_name_override,
                 self.ptr()
-            )?)
+            ))
         };
         if name.is_empty() || !name.is_ascii() {
             return None;
@@ -779,7 +824,7 @@ impl VerifyCertificateContext {
     /// [RFC 2560]: <https://datatracker.ietf.org/doc/html/rfc6960>
     pub fn get_ocsp_response(&self) -> Option<&[u8]> {
         // Safety: response, when it exists, is outlived by the connection.
-        let response = call_slice_getter!(bssl_sys::SSL_get0_ocsp_response, self.ptr())?;
+        let response = call_slice_getter!(bssl_sys::SSL_get0_ocsp_response, self.ptr());
         (!response.is_empty()).then_some(response)
     }
 
@@ -788,7 +833,7 @@ impl VerifyCertificateContext {
     /// [RFC 6962]: <https://datatracker.ietf.org/doc/html/rfc6962#section-3.2>
     pub fn get_signed_cert_timestamp_list(&self) -> Option<&[u8]> {
         // Safety: list, when it exists, is outlived by the connection.
-        let list = call_slice_getter!(bssl_sys::SSL_get0_signed_cert_timestamp_list, self.ptr())?;
+        let list = call_slice_getter!(bssl_sys::SSL_get0_signed_cert_timestamp_list, self.ptr());
         (!list.is_empty()).then_some(list)
     }
 
@@ -1060,6 +1105,7 @@ bssl_macros::bssl_enum! {
     ///
     /// [IANA]: https://www.iana.org/assignments/tls-extensiontype-values/tls-extensiontype-values.xhtml#tls-extensiontype-values-3
     #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+    #[non_exhaustive]
     pub enum CertificateType: u8 {
         /// X.509 certificate type.
         X509 = bssl_sys::TLSEXT_cert_type_x509 as u8,
@@ -1111,6 +1157,31 @@ pub(crate) fn marshal_evp_into_spki(pkey: NonNull<bssl_sys::EVP_PKEY>) -> Vec<u8
         );
     });
     buffer.as_ref().to_vec()
+}
+
+/// Get the peer's [`CertificateType`] from a valid SSL handle.
+///
+/// # Safety
+/// `ssl` must be a valid `SSL` pointer.
+pub(crate) fn get_peer_certificate_type(ssl: *mut bssl_sys::SSL) -> Option<CertificateType> {
+    let ty = unsafe {
+        // Safety: `ssl` is a valid `SSL` handle by caller invariant.
+        bssl_sys::SSL_get_peer_cert_type(ssl)
+    };
+    ty.try_into().ok().and_then(|ty: u8| ty.try_into().ok())
+}
+
+/// Get the peer's raw public key as DER-encoded `SubjectPublicKeyInfo` from a valid SSL handle.
+///
+/// # Safety
+/// `ssl` must be a valid `SSL` pointer.
+pub(crate) fn get_peer_raw_public_key(ssl: *mut bssl_sys::SSL) -> Option<Vec<u8>> {
+    let pkey = unsafe {
+        // Safety: `ssl` is a valid `SSL` handle by caller invariant.
+        // `pkey` does not escape the current function frame.
+        NonNull::new(bssl_sys::SSL_get0_peer_rpk(ssl))?
+    };
+    Some(marshal_evp_into_spki(pkey))
 }
 
 crypto_buffer_wrapper! {

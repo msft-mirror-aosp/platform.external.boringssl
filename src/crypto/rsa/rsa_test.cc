@@ -582,15 +582,10 @@ TEST(RSATest, GenerateFIPS) {
 
   // RSA_generate_key_fips may only be used for 2048-, 3072-, and 4096-bit
   // keys.
-  EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), 512, nullptr));
-  EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), 1024, nullptr));
-  EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), 2047, nullptr));
-  EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), 2049, nullptr));
-  EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), 3071, nullptr));
-  EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), 3073, nullptr));
-  EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), 4095, nullptr));
-  EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), 4097, nullptr));
-  ERR_clear_error();
+  for (int bits : {512, 1024, 2047, 2049, 3071, 3073, 4095, 4097}) {
+    EXPECT_FALSE(RSA_generate_key_fips(rsa.get(), bits, nullptr));
+    EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_RSA, RSA_R_BAD_RSA_PARAMETERS}}));
+  }
 
   // Test that we can generate keys of the supported lengths:
   for (const size_t bits : {2048, 3072, 4096}) {
@@ -673,7 +668,9 @@ TEST(RSATest, BadKey) {
 
   // Bad keys are detected.
   EXPECT_FALSE(RSA_check_key(key.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_RSA, RSA_R_N_NOT_EQUAL_P_Q}}));
   EXPECT_FALSE(RSA_check_fips(key.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_RSA, RSA_R_N_NOT_EQUAL_P_Q}}));
 
   // Bad keys may not be parsed.
   uint8_t *der;
@@ -1431,18 +1428,21 @@ TEST(RSATest, LargeE) {
 
   // e = 1 is still invalid.
   EXPECT_FALSE(RSA_new_public_key_large_e(n, BN_value_one()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_RSA, RSA_R_BAD_E_VALUE}}));
 
   // e must still be odd.
   UniquePtr<BIGNUM> bad_e(BN_dup(d));
   ASSERT_TRUE(bad_e);
   ASSERT_TRUE(BN_add_word(bad_e.get(), 1));
   EXPECT_FALSE(RSA_new_public_key_large_e(n, bad_e.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_RSA, RSA_R_BAD_E_VALUE}}));
 
   // e must still be bounded by n.
   bad_e.reset(BN_dup(n));
   ASSERT_TRUE(bad_e);
   ASSERT_TRUE(BN_add_word(bad_e.get(), 2));  // Preserve parity.
   EXPECT_FALSE(RSA_new_public_key_large_e(n, bad_e.get()));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_RSA, RSA_R_BAD_E_VALUE}}));
 }
 
 TEST(RSATest, KeyLimits) {
@@ -1479,10 +1479,15 @@ TEST(RSATest, KeyLimits) {
   // TODO(crbug.com/42290480): Raise the lower bound. 512-bit RSA was factored
   // in 1999.
   EXPECT_FALSE(generate_key(511u));
-  EXPECT_TRUE(
-      ErrorEquals(ERR_get_error(), ERR_LIB_RSA, RSA_R_KEY_SIZE_TOO_SMALL));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_RSA, RSA_R_KEY_SIZE_TOO_SMALL}}));
   EXPECT_FALSE(read_private_key("crypto/rsa/test/rsa511.pem"));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_EVP, EVP_R_DECODE_ERROR}}));
   EXPECT_FALSE(read_public_key("crypto/rsa/test/rsa511pub.pem"));
+  EXPECT_TRUE(ErrorsAreAndClear({
+      {ERR_LIB_RSA, RSA_R_KEY_SIZE_TOO_SMALL},
+      {ERR_LIB_RSA, RSA_R_BAD_RSA_PARAMETERS},
+      {ERR_LIB_RSA, RSA_R_BAD_ENCODING},
+  }));
 
   UniquePtr<RSA> rsa = read_private_key("crypto/rsa/test/rsa512.pem");
   ASSERT_TRUE(rsa);
@@ -1517,8 +1522,15 @@ TEST(RSATest, KeyLimits) {
   EXPECT_EQ(RSA_bits(rsa.get()), 16384u);
 
   EXPECT_FALSE(read_private_key("crypto/rsa/test/rsa16385.pem"));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_EVP, EVP_R_DECODE_ERROR}}));
   EXPECT_FALSE(read_public_key("crypto/rsa/test/rsa16385pub.pem"));
+  EXPECT_TRUE(ErrorsAreAndClear({
+      {ERR_LIB_RSA, RSA_R_MODULUS_TOO_LARGE},
+      {ERR_LIB_RSA, RSA_R_BAD_RSA_PARAMETERS},
+      {ERR_LIB_RSA, RSA_R_BAD_ENCODING},
+  }));
   EXPECT_FALSE(generate_key(16385u));
+  EXPECT_TRUE(ErrorsAreAndClear({{ERR_LIB_RSA, RSA_R_MODULUS_TOO_LARGE}}));
 }
 
 #if defined(OPENSSL_THREADS)
