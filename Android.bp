@@ -54,7 +54,6 @@ cc_defaults {
         "-DOPENSSL_SMALL",
         "-Werror",
         "-Wno-unused-parameter",
-        "-DBORINGSSL_TEMPORARY_NO_CXX_RUNTIME",
     ],
 
     cppflags: [
@@ -77,7 +76,11 @@ cc_defaults {
 
 cc_defaults {
     name: "boringssl_flags_baremetal",
-    cflags: ["-DANDROID_BAREMETAL"],
+    cflags: [
+        "-DANDROID_BAREMETAL",
+        // TODO(b/486922845): Remove this.
+        "-DBORINGSSL_TEMPORARY_NO_CXX_RUNTIME",
+    ],
     defaults: [
         "boringssl_flags_common",
         "cc_baremetal_defaults",
@@ -279,8 +282,8 @@ cc_library {
             ],
             sanitize: {
                 // Disable address sanitizing otherwise libcrypto will not report
-                // itself as being in FIPS mode, which causes boringssl_self_test
-                // to fail.
+                // itself as being in FIPS mode, which causes selftests to fail
+                // per process (b/518610340).
                 address: false,
             },
             inject_bssl_hash: true,
@@ -936,6 +939,7 @@ rust_library_host_rlib {
     name: "libbssl_sys_static",
     defaults: ["libbssl_sys_static_defaults"],
     whole_static_libs: [
+        "libc++_static",
         "libcrypto_static",
         "libssl_static",
     ],
