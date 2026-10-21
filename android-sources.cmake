@@ -616,6 +616,7 @@ set(crypto_test_data
   ${BORINGSSL_ROOT}src/crypto/cipher/test/nist_cavp/tdes_ecb.txt
   ${BORINGSSL_ROOT}src/crypto/cipher/test/xchacha20_poly1305_tests.txt
   ${BORINGSSL_ROOT}src/crypto/curve25519/ed25519_tests.txt
+  ${BORINGSSL_ROOT}src/crypto/curve25519/ed25519ph_tests.txt
   ${BORINGSSL_ROOT}src/crypto/ecdh/ecdh_tests.txt
   ${BORINGSSL_ROOT}src/crypto/evp/test/dh_tests.txt
   ${BORINGSSL_ROOT}src/crypto/evp/test/ec_tests.txt
