@@ -343,6 +343,7 @@ add_library(
   src/crypto/cpu_arm_linux.cc
   src/crypto/cpu_intel.cc
   src/crypto/crypto.cc
+  src/crypto/curve25519/cpace.cc
   src/crypto/curve25519/curve25519.cc
   src/crypto/curve25519/curve25519_64_adx.cc
   src/crypto/curve25519/spake25519.cc
@@ -369,6 +370,7 @@ add_library(
   src/crypto/evp/p_ec.cc
   src/crypto/evp/p_ed25519.cc
   src/crypto/evp/p_hkdf.cc
+  src/crypto/evp/p_keccak.cc
   src/crypto/evp/p_mldsa.cc
   src/crypto/evp/p_mlkem.cc
   src/crypto/evp/p_rsa.cc
