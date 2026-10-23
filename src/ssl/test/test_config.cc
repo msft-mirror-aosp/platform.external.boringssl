@@ -334,6 +334,7 @@ const Flag<TestConfig> *FindFlag(const char *name) {
         BoolFlag("-quic", &TestConfig::is_quic),
         IntFlag("-resume-count", &TestConfig::resume_count),
         StringFlag("-write-settings", &TestConfig::write_settings),
+        StringFlag("-write-hint-trace", &TestConfig::write_hint_trace),
 #if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
         BoolFlag("-fuzzer-mode", &TestConfig::fuzzer_mode),
 #endif
@@ -2139,7 +2140,6 @@ bssl::UniquePtr<SSL_CTX> TestConfig::SetupCtx(SSL_CTX *old_ctx) const {
 
   if (enable_grease) {
     SSL_CTX_set_grease_enabled(ssl_ctx.get(), 1);
-    SSL_CTX_set_grease_sigalgs_enabled(ssl_ctx.get(), 1);
   }
 
   if (permute_extensions) {

@@ -270,10 +270,6 @@ OPENSSL_timeval ssl_ctx_get_current_time(const SSLContext *ctx) {
 #endif
 }
 
-void SSL_CTX_set_handoff_mode(SSL_CTX *ctx, bool on) {
-  FromOpaque(ctx)->handoff = on;
-}
-
 static bool ssl_can_renegotiate(const SSLImpl *ssl) {
   if (ssl->server || SSL_is_dtls(ssl)) {
     return false;
@@ -316,14 +312,6 @@ static void ssl_maybe_shed_handshake_config(SSLImpl *ssl) {
   ssl->config.reset();
 }
 
-void SSL_set_handoff_mode(SSL *ssl, bool on) {
-  auto *ssl_impl = FromOpaque(ssl);
-  if (!ssl_impl->config) {
-    return;
-  }
-  ssl_impl->config->handoff = on;
-}
-
 bool SSL_get_traffic_secrets(const SSL *ssl,
                              Span<const uint8_t> *out_read_traffic_secret,
                              Span<const uint8_t> *out_write_traffic_secret) {
@@ -361,12 +349,14 @@ int OPENSSL_init_ssl(uint64_t opts, const OPENSSL_INIT_SETTINGS *settings) {
   return 1;
 }
 
+// TODO(crbug.com/565766495): Take `SSLSession` when the lhash does.
 static uint32_t ssl_session_hash(const SSL_SESSION *sess) {
-  return ssl_hash_session_id(sess->session_id);
+  return ssl_hash_session_id(FromOpaque(sess)->session_id);
 }
 
+// TODO(crbug.com/565766495): Take `SSLSession` when the lhash does.
 static int ssl_session_cmp(const SSL_SESSION *a, const SSL_SESSION *b) {
-  return Span(a->session_id) == b->session_id ? 0 : 1;
+  return Span(FromOpaque(a)->session_id) == FromOpaque(b)->session_id ? 0 : 1;
 }
 
 bssl::SSLContext::SSLContext(const SSL_METHOD *ssl_method)
@@ -379,11 +369,9 @@ bssl::SSLContext::SSLContext(const SSL_METHOD *ssl_method)
       signed_cert_timestamps_enabled(false),
       channel_id_enabled(false),
       grease_enabled(false),
-      grease_sigalgs_enabled(false),
       permute_extensions(false),
       allow_unknown_alpn_protos(false),
       false_start_allowed_without_alpn(false),
-      handoff(false),
       enable_early_data(false),
       resumption_across_names_enabled(false) {
   CRYPTO_new_ex_data(&ex_data);
@@ -449,6 +437,13 @@ SSL_CTX *SSL_CTX_new(const SSL_METHOD *method) {
 int SSL_CTX_up_ref(SSL_CTX *ctx) {
   FromOpaque(ctx)->UpRefInternal();
   return 1;
+}
+
+SSL_CTX *SSL_CTX_dup_ref(const SSL_CTX *ctx) {
+  if (ctx == nullptr) {
+    return nullptr;
+  }
+  return FromOpaque(ctx)->DupRefInternal();
 }
 
 void SSL_CTX_free(SSL_CTX *ctx) {
@@ -557,7 +552,6 @@ SSL *SSL_new(SSL_CTX *ctx) {
   ssl->config->signed_cert_timestamps_enabled =
       ctx_impl->signed_cert_timestamps_enabled;
   ssl->config->ocsp_stapling_enabled = ctx_impl->ocsp_stapling_enabled;
-  ssl->config->handoff = ctx_impl->handoff;
   ssl->quic_method = ctx_impl->quic_method;
 
   if (!ssl->method->ssl_new(ssl.get()) ||
@@ -576,7 +570,6 @@ SSL_CONFIG::SSL_CONFIG(SSLImpl *ssl_arg)
       ocsp_stapling_enabled(false),
       channel_id_enabled(false),
       retain_only_sha256_of_client_certs(false),
-      handoff(false),
       shed_handshake_config(false),
       jdk11_workaround(false),
       quic_use_legacy_codepoint(false),
@@ -1241,8 +1234,6 @@ int SSL_get_error(const SSL *ssl, int ret_code) {
   switch (ssl_impl->s3->rwstate) {
     case SSL_ERROR_PENDING_SESSION:
     case SSL_ERROR_PENDING_CERTIFICATE:
-    case SSL_ERROR_HANDOFF:
-    case SSL_ERROR_HANDBACK:
     case SSL_ERROR_WANT_X509_LOOKUP:
     case SSL_ERROR_WANT_PRIVATE_KEY_OPERATION:
     case SSL_ERROR_PENDING_TICKET:
@@ -1329,10 +1320,6 @@ const char *SSL_error_description(int err) {
       return "EARLY_DATA_REJECTED";
     case SSL_ERROR_WANT_CERTIFICATE_VERIFY:
       return "WANT_CERTIFICATE_VERIFY";
-    case SSL_ERROR_HANDOFF:
-      return "HANDOFF";
-    case SSL_ERROR_HANDBACK:
-      return "HANDBACK";
     case SSL_ERROR_WANT_RENEGOTIATE:
       return "WANT_RENEGOTIATE";
     case SSL_ERROR_HANDSHAKE_HINTS_READY:
@@ -2171,7 +2158,7 @@ int SSL_set1_groups_list(SSL *ssl, const char *groups) {
 }
 
 uint16_t SSL_get_group_id(const SSL *ssl) {
-  SSL_SESSION *session = SSL_get_session(ssl);
+  SSLSession *session = ssl_get_session(FromOpaque(ssl));
   if (session == nullptr) {
     return 0;
   }
@@ -2362,7 +2349,7 @@ void SSL_enable_ocsp_stapling(SSL *ssl) {
 
 void SSL_get0_signed_cert_timestamp_list(const SSL *ssl, const uint8_t **out,
                                          size_t *out_len) {
-  SSL_SESSION *session = SSL_get_session(ssl);
+  SSLSession *session = ssl_get_session(FromOpaque(ssl));
   if (FromOpaque(ssl)->server || !session ||
       !session->signed_cert_timestamp_list) {
     *out_len = 0;
@@ -2376,7 +2363,7 @@ void SSL_get0_signed_cert_timestamp_list(const SSL *ssl, const uint8_t **out,
 
 void SSL_get0_ocsp_response(const SSL *ssl, const uint8_t **out,
                             size_t *out_len) {
-  SSL_SESSION *session = SSL_get_session(ssl);
+  SSLSession *session = ssl_get_session(FromOpaque(ssl));
   if (FromOpaque(ssl)->server || !session || !session->ocsp_response) {
     *out_len = 0;
     *out = nullptr;
@@ -2567,7 +2554,7 @@ int SSL_add_application_settings(SSL *ssl, const uint8_t *proto,
 void SSL_get0_peer_application_settings(const SSL *ssl,
                                         const uint8_t **out_data,
                                         size_t *out_len) {
-  const SSL_SESSION *session = SSL_get_session(ssl);
+  const SSLSession *session = ssl_get_session(FromOpaque(ssl));
   Span<const uint8_t> settings =
       session ? session->peer_application_settings : Span<const uint8_t>();
   *out_data = settings.data();
@@ -2575,7 +2562,7 @@ void SSL_get0_peer_application_settings(const SSL *ssl,
 }
 
 int SSL_has_application_settings(const SSL *ssl) {
-  const SSL_SESSION *session = SSL_get_session(ssl);
+  const SSLSession *session = ssl_get_session(FromOpaque(ssl));
   return session && session->has_application_settings;
 }
 
@@ -2628,7 +2615,7 @@ int SSL_enable_tls_channel_id(SSL *ssl) {
   return 1;
 }
 
-int SSL_CTX_set1_tls_channel_id(SSL_CTX *ctx, EVP_PKEY *private_key) {
+int SSL_CTX_set1_tls_channel_id(SSL_CTX *ctx, const EVP_PKEY *private_key) {
   if (EVP_PKEY_get_ec_curve_nid(private_key) != NID_X9_62_prime256v1) {
     OPENSSL_PUT_ERROR(SSL, SSL_R_CHANNEL_ID_NOT_P256);
     return 0;
@@ -2638,7 +2625,7 @@ int SSL_CTX_set1_tls_channel_id(SSL_CTX *ctx, EVP_PKEY *private_key) {
   return 1;
 }
 
-int SSL_set1_tls_channel_id(SSL *ssl, EVP_PKEY *private_key) {
+int SSL_set1_tls_channel_id(SSL *ssl, const EVP_PKEY *private_key) {
   auto *ssl_impl = FromOpaque(ssl);
   if (!ssl_impl->config) {
     return 0;
@@ -2707,7 +2694,7 @@ EVP_PKEY *SSL_CTX_get0_privatekey(const SSL_CTX *ctx) {
 }
 
 const SSL_CIPHER *SSL_get_current_cipher(const SSL *ssl) {
-  const SSL_SESSION *session = SSL_get_session(ssl);
+  const SSLSession *session = ssl_get_session(FromOpaque(ssl));
   return session == nullptr ? nullptr : session->cipher;
 }
 
@@ -2955,7 +2942,7 @@ const char *SSL_get_psk_identity(const SSL *ssl) {
   if (ssl == nullptr) {
     return nullptr;
   }
-  SSL_SESSION *session = SSL_get_session(ssl);
+  SSLSession *session = ssl_get_session(FromOpaque(ssl));
   if (session == nullptr) {
     return nullptr;
   }
@@ -3256,7 +3243,7 @@ int SSL_get_dtls_write_traffic_secret(const SSL *ssl, const uint8_t **out_data,
 }
 
 uint16_t SSL_get_peer_signature_algorithm(const SSL *ssl) {
-  SSL_SESSION *session = SSL_get_session(ssl);
+  SSLSession *session = ssl_get_session(FromOpaque(ssl));
   if (session == nullptr) {
     return 0;
   }
@@ -3322,10 +3309,6 @@ void SSL_CTX_set_grease_enabled(SSL_CTX *ctx, int enabled) {
   FromOpaque(ctx)->grease_enabled = !!enabled;
 }
 
-void SSL_CTX_set_grease_sigalgs_enabled(SSL_CTX *ctx, int enabled) {
-  FromOpaque(ctx)->grease_sigalgs_enabled = !!enabled;
-}
-
 void SSL_CTX_set_permute_extensions(SSL_CTX *ctx, int enabled) {
   FromOpaque(ctx)->permute_extensions = !!enabled;
 }
@@ -3383,7 +3366,7 @@ int SSL_clear(SSL *ssl) {
   // In OpenSSL, reusing a client `SSL` with `SSL_clear` causes the previously
   // established session to be offered the next time around. wpa_supplicant
   // depends on this behavior, so emulate it.
-  UniquePtr<SSL_SESSION> session;
+  UniquePtr<SSLSession> session;
   if (!ssl_impl->server && ssl_impl->s3->established_session != nullptr) {
     session = UpRef(ssl_impl->s3->established_session);
   }
@@ -3481,7 +3464,7 @@ SSL_SESSION *SSL_process_tls13_new_session_ticket(SSL *ssl, const uint8_t *buf,
     return nullptr;
   }
 
-  UniquePtr<SSL_SESSION> session =
+  UniquePtr<SSLSession> session =
       tls13_create_session_with_ticket(ssl_impl, &body);
   if (!session) {
     // `tls13_create_session_with_ticket` puts the correct error.
@@ -4115,14 +4098,16 @@ int SSL_set1_available_client_cert_types(SSL *ssl, const uint8_t *values,
 }
 
 int SSL_get_peer_cert_type(const SSL *ssl) {
-  if (const SSL_SESSION *session = SSL_get_session(ssl); session != nullptr) {
+  if (const SSLSession *session = ssl_get_session(FromOpaque(ssl));
+      session != nullptr) {
     return session->peer_cert_type;
   }
   return kDefaultCertType;
 }
 
 EVP_PKEY *SSL_get0_peer_rpk(const SSL *ssl) {
-  if (const SSL_SESSION *session = SSL_get_session(ssl); session != nullptr) {
+  if (const SSLSession *session = ssl_get_session(FromOpaque(ssl));
+      session != nullptr) {
     return session->peer_raw_public_key.get();
   }
   return nullptr;
